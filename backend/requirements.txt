@@ -1,0 +1,34 @@
+# Core Web Framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+pydantic>=2.7.0
+pydantic-settings>=2.2.1
+
+# Database and ORM
+sqlalchemy>=2.0.29
+psycopg2-binary>=2.9.9
+alembic>=1.13.1
+
+# Document Parsing & Processing
+pdfplumber>=0.11.0
+pypdf>=4.2.0
+
+# Browser Automation & Submission
+playwright>=1.43.0
+
+# Telemetry and Observability
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+prometheus-client>=0.20.0
+
+# HTTP & Utilities
+httpx>=0.27.0
+requests>=2.31.0
+python-dotenv>=1.0.1
+pyyaml>=6.0.1
+
+# Testing
+pytest>=8.1.1
+pytest-asyncio>=0.23.6

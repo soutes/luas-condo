@@ -1,0 +1,88 @@
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: luas_condo_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-luas_condo}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-luas_condo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: luas_condo_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
+      MOCK_BITRIX_URL: http://mock-bitrix:8080
+      MOCK_SUBMISSION: ${MOCK_SUBMISSION:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  mock-bitrix:
+    build:
+      context: ./mock_bitrix
+      dockerfile: Dockerfile
+    container_name: luas_condo_mock_bitrix
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./mock_bitrix:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: luas_condo_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: luas_condo_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: luas_condo_grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      - prometheus
+
+volumes:
+  pgdata:
