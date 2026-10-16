@@ -3,6 +3,7 @@ Pydantic schemas for request and response validation.
 """
 
 from app.schemas.condo import (
+    AuditReport,
     CicloCondominioBase,
     CicloCondominioCreate,
     CicloCondominioResponse,
@@ -10,6 +11,7 @@ from app.schemas.condo import (
     IncidenteOnCallBase,
     IncidenteOnCallCreate,
     IncidenteOnCallResponse,
+    ItemAuditado,
     ItemRateioBase,
     ItemRateioCreate,
     ItemRateioResponse,
@@ -21,6 +23,7 @@ from app.schemas.condo import (
 )
 
 __all__ = [
+    "AuditReport",
     "CicloCondominioBase",
     "CicloCondominioCreate",
     "CicloCondominioResponse",
@@ -28,6 +31,7 @@ __all__ = [
     "IncidenteOnCallBase",
     "IncidenteOnCallCreate",
     "IncidenteOnCallResponse",
+    "ItemAuditado",
     "ItemRateioBase",
     "ItemRateioCreate",
     "ItemRateioResponse",

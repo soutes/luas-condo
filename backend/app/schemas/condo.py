@@ -140,3 +140,29 @@ class ParsedCondoBill(BaseModel):
     valor_leituras: Decimal
     linha_digitavel: Optional[str] = None
     itens: list[ParsedItemRateio] = []
+
+
+# Audit Schemas
+class ItemAuditado(BaseModel):
+    descricao: str
+    valor: Decimal
+    categoria: CategoriaItem
+    responsabilidade: ResponsabilidadeItem
+    justificativa_legal: Optional[str] = None
+
+    @property
+    def valor_unidade(self) -> Decimal:
+        return self.valor
+
+
+class AuditReport(BaseModel):
+    competencia: str
+    condominio_nome: str
+    data_vencimento: date
+    valor_total_boleto: Decimal
+    valor_locatario: Decimal
+    valor_locador: Decimal
+    total_reimbursement: Decimal
+    itens_auditados: list[ItemAuditado] = []
+    formatted_observations: str
+    revisao_necessaria: bool = False
