@@ -6,7 +6,7 @@ No emojis used.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import email
 from email.header import decode_header
@@ -584,15 +584,48 @@ def sync_condo_cycle(
 
             # Build text corpus for matching
             extracted_pdf_text = ""
-            if pix_doc.filename.lower().endswith(".pdf") or "pdf" in pix_doc.content_type.lower():
+            if (
+                pix_doc.filename.lower().endswith(".pdf")
+                or "pdf" in pix_doc.content_type.lower()
+            ):
                 extracted_pdf_text = _extract_pdf_text_safe(pix_doc.content)
 
             corpus = (
                 f"{pix_doc.filename} {pix_doc.email_subject} {extracted_pdf_text}"
             ).upper()
 
-            # Attempt matching against available cycles
-            for cycle in all_cycles:
+            # Filter candidate cycles: prioritize active PENDENTE_COMPROVANTE,
+            # strictly excluding completed/terminal cycles (ENVIADO, PROCESSADO_ALUGUEL)
+            pending_candidates = [
+                c
+                for c in all_cycles
+                if c.status_ciclo == StatusCiclo.PENDENTE_COMPROVANTE
+            ]
+            candidates = (
+                pending_candidates
+                if pending_candidates
+                else [
+                    c
+                    for c in all_cycles
+                    if c.status_ciclo
+                    not in (StatusCiclo.ENVIADO, StatusCiclo.PROCESSADO_ALUGUEL)
+                ]
+            )
+
+            # Sort candidates by data_vencimento descending, then competencia descending
+            # to match the most recent active cycle when competence is unspecified
+            candidates.sort(
+                key=lambda c: (
+                    c.data_vencimento or date.min,
+                    c.competencia or "",
+                ),
+                reverse=True,
+            )
+
+            best_match: Optional[CicloCondominio] = None
+
+            # Pass 1: exact match on both competence and amount
+            for cycle in candidates:
                 comp_parts = cycle.competencia.split("-")
                 comp_slash = (
                     f"{comp_parts[1]}/{comp_parts[0]}"
@@ -601,7 +634,12 @@ def sync_condo_cycle(
                 )
                 amt_dot = f"{cycle.valor_total:.2f}"
                 amt_comma = amt_dot.replace(".", ",")
-                amt_br = f"{cycle.valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                amt_br = (
+                    f"{cycle.valor_total:,.2f}"
+                    .replace(",", "X")
+                    .replace(".", ",")
+                    .replace("X", ".")
+                )
 
                 amount_matches = (
                     amt_dot in corpus or amt_comma in corpus or amt_br in corpus
@@ -612,19 +650,51 @@ def sync_condo_cycle(
                     or f"{comp_parts[1]}-{comp_parts[0]}" in corpus
                 )
 
-                # If amount matches or competence matches, or if only 1 cycle exists and receipt mentions payment
-                matches = (
-                    (amount_matches and comp_matches)
-                    or amount_matches
-                    or (comp_matches and any(k in corpus for k in ["PIX", "COMPROVANTE", "PAGAMENTO"]))
-                )
-
-                if matches:
-                    cycle.comprovante_pix_path = str(file_path)
-                    cycle.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
-                    affected_cycles[cycle.competencia] = cycle
-                    db_session.flush()
+                if comp_matches and amount_matches:
+                    best_match = cycle
                     break
+
+            # Pass 2: fallback to competence with payment keywords or amount match on most recent pending
+            if best_match is None:
+                for cycle in candidates:
+                    comp_parts = cycle.competencia.split("-")
+                    comp_slash = (
+                        f"{comp_parts[1]}/{comp_parts[0]}"
+                        if len(comp_parts) == 2
+                        else cycle.competencia
+                    )
+                    amt_dot = f"{cycle.valor_total:.2f}"
+                    amt_comma = amt_dot.replace(".", ",")
+                    amt_br = (
+                        f"{cycle.valor_total:,.2f}"
+                        .replace(",", "X")
+                        .replace(".", ",")
+                        .replace("X", ".")
+                    )
+
+                    amount_matches = (
+                        amt_dot in corpus or amt_comma in corpus or amt_br in corpus
+                    )
+                    comp_matches = (
+                        cycle.competencia in corpus
+                        or comp_slash in corpus
+                        or f"{comp_parts[1]}-{comp_parts[0]}" in corpus
+                    )
+
+                    if comp_matches and any(
+                        k in corpus for k in ["PIX", "COMPROVANTE", "PAGAMENTO"]
+                    ):
+                        best_match = cycle
+                        break
+                    elif amount_matches:
+                        best_match = cycle
+                        break
+
+            if best_match is not None:
+                best_match.comprovante_pix_path = str(file_path)
+                best_match.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
+                affected_cycles[best_match.competencia] = best_match
+                db_session.flush()
 
     db_session.commit()
     return list(affected_cycles.values())

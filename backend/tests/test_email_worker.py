@@ -328,3 +328,100 @@ def test_sync_condo_cycle_unmatched_pix_remains_pending(db_session: Session, tmp
     ciclo = db_session.query(CicloCondominio).filter_by(competencia="2026-09").one()
     assert ciclo.status_ciclo == StatusCiclo.PENDENTE_COMPROVANTE
     assert ciclo.comprovante_pix_path is None
+
+
+def test_sync_condo_cycle_disambiguation_multi_cycle(db_session: Session, tmp_path: Path):
+    """Verify PIX receipt matches active pending cycle and avoids terminal cycles or matches exact competence."""
+    storage_dir = str(tmp_path / "storage")
+
+    # Cycle 1: terminal ENVIADO cycle with existing receipt
+    c1 = CicloCondominio(
+        competencia="2026-08",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 9, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ordinarias=Decimal("596.27"),
+        valor_extraordinarias=Decimal("294.87"),
+        valor_fundos=Decimal("59.63"),
+        valor_leituras=Decimal("203.54"),
+        valor_ressarcimento=Decimal("354.50"),
+        boleto_pdf_path="/data/storage/2026-08.pdf",
+        comprovante_pix_path="/data/storage/old_pix_2026_08.png",
+        status_ciclo=StatusCiclo.ENVIADO,
+    )
+
+    # Cycle 2: older pending cycle
+    c2 = CicloCondominio(
+        competencia="2026-09",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 10, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ordinarias=Decimal("596.27"),
+        valor_extraordinarias=Decimal("294.87"),
+        valor_fundos=Decimal("59.63"),
+        valor_leituras=Decimal("203.54"),
+        valor_ressarcimento=Decimal("354.50"),
+        boleto_pdf_path="/data/storage/2026-09.pdf",
+        comprovante_pix_path=None,
+        status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+    )
+
+    # Cycle 3: most recent pending cycle
+    c3 = CicloCondominio(
+        competencia="2026-10",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 11, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ordinarias=Decimal("596.27"),
+        valor_extraordinarias=Decimal("294.87"),
+        valor_fundos=Decimal("59.63"),
+        valor_leituras=Decimal("203.54"),
+        valor_ressarcimento=Decimal("354.50"),
+        boleto_pdf_path="/data/storage/2026-10.pdf",
+        comprovante_pix_path=None,
+        status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+    )
+
+    db_session.add_all([c1, c2, c3])
+    db_session.commit()
+
+    # Ingest receipt without explicit competence: should bind to most recent pending (2026-10), not ENVIADO (2026-08)
+    pix_recent = IngestedDocument(
+        doc_type=DocumentType.PIX_RECEIPT,
+        filename="Comprovante_PIX_Nov.png",
+        content=b"\x89PNG\r\n\x1a\nfake image",
+        content_type="image/png",
+        email_uid=601,
+        email_sender="notificacoes@banco.com.br",
+        email_subject="Comprovante de pagamento PIX R$ 1.154,31",
+    )
+    sync_condo_cycle(db_session, [pix_recent], storage_dir=storage_dir)
+
+    c1_refreshed = db_session.get(CicloCondominio, c1.id)
+    c2_refreshed = db_session.get(CicloCondominio, c2.id)
+    c3_refreshed = db_session.get(CicloCondominio, c3.id)
+
+    # ENVIADO cycle must not be overwritten
+    assert c1_refreshed.status_ciclo == StatusCiclo.ENVIADO
+    assert c1_refreshed.comprovante_pix_path == "/data/storage/old_pix_2026_08.png"
+
+    # Most recent pending cycle (2026-10) should be promoted
+    assert c3_refreshed.status_ciclo == StatusCiclo.PRONTO_PARA_ENVIO
+    assert c3_refreshed.comprovante_pix_path is not None
+
+    # Next receipt with explicit competence for 09/2026 binds specifically to 2026-09
+    pix_comp = IngestedDocument(
+        doc_type=DocumentType.PIX_RECEIPT,
+        filename="Comprovante_PIX_Set.png",
+        content=b"\x89PNG\r\n\x1a\nfake image",
+        content_type="image/png",
+        email_uid=602,
+        email_sender="notificacoes@banco.com.br",
+        email_subject="Comprovante de pagamento PIX R$ 1.154,31 ref 09/2026",
+    )
+    sync_condo_cycle(db_session, [pix_comp], storage_dir=storage_dir)
+
+    c2_refreshed = db_session.get(CicloCondominio, c2.id)
+    assert c2_refreshed.status_ciclo == StatusCiclo.PRONTO_PARA_ENVIO
+    assert "Comprovante_PIX_Set.png" in c2_refreshed.comprovante_pix_path
+
