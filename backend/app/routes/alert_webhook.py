@@ -31,19 +31,22 @@ def receive_alert_webhook(
 
     alerts = payload.get("alerts")
     # If standard Alertmanager payload with list of alerts
-    if isinstance(alerts, list) and len(alerts) > 0:
+    if isinstance(alerts, list):
         incidentes_result = []
         for alert_item in alerts:
-            if isinstance(alert_item, dict):
-                incidente = handle_incident_alert(alert_item, db_session=db)
-                incidentes_result.append({
-                    "id": str(incidente.id),
-                    "trace_id": incidente.trace_id,
-                    "alerta_nome": incidente.alerta_nome,
-                    "status": incidente.status.value,
-                    "diagnostico": incidente.diagnostico,
-                    "acao_executada": incidente.acao_executada,
-                })
+            if not isinstance(alert_item, dict):
+                continue
+            if alert_item.get("status") == "resolved":
+                continue
+            incidente = handle_incident_alert(alert_item, db_session=db)
+            incidentes_result.append({
+                "id": str(incidente.id),
+                "trace_id": incidente.trace_id,
+                "alerta_nome": incidente.alerta_nome,
+                "status": incidente.status.value,
+                "diagnostico": incidente.diagnostico,
+                "acao_executada": incidente.acao_executada,
+            })
         return {
             "status": "processed",
             "count": len(incidentes_result),
@@ -51,7 +54,15 @@ def receive_alert_webhook(
         }
 
     # Handle direct single alert payload
+    if payload.get("status") == "resolved":
+        return {
+            "status": "processed",
+            "count": 0,
+            "incidentes": [],
+        }
+
     incidente = handle_incident_alert(payload, db_session=db)
+
     return {
         "status": "processed",
         "count": 1,

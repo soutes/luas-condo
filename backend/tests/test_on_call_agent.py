@@ -14,7 +14,7 @@ import sys
 import uuid
 import yaml
 import pytest
-from starlette.testclient import TestClient
+from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -39,6 +39,7 @@ from app.agents.on_call import (
     handle_incident_alert,
     remediate_selector_mismatch,
     remediate_http_5xx_timeout,
+    set_default_http_client,
 )
 from app.main import app
 from mock_bitrix.main import app as mock_bitrix_app
@@ -64,10 +65,15 @@ def db_session():
         Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture
+def mock_bitrix_client():
+    """In-memory TestClient targeting mock_bitrix app."""
+    return TestClient(mock_bitrix_app)
+
 
 @pytest.fixture
-def client_app(db_session: Session):
-    """FastAPI TestClient with overridden get_db dependency."""
+def client_app(db_session: Session, mock_bitrix_client):
+    """FastAPI TestClient with overridden get_db dependency and injected test transport."""
     def _override_get_db():
         try:
             yield db_session
@@ -75,15 +81,12 @@ def client_app(db_session: Session):
             pass
 
     app.dependency_overrides[get_db] = _override_get_db
+    set_default_http_client(mock_bitrix_client)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    set_default_http_client(None)
 
-
-@pytest.fixture
-def mock_bitrix_client():
-    """In-memory TestClient targeting mock_bitrix app."""
-    return TestClient(mock_bitrix_app)
 
 
 # ---------------------------------------------------------------------------
@@ -512,3 +515,51 @@ def test_alertmanager_webhook_endpoint_escalates_unrecoverable(client_app, db_se
     data = response.json()
     assert "incidentes" in data
     assert data["incidentes"][0]["status"] == "ESCALADO_HUMANO"
+
+
+def test_alertmanager_webhook_ignores_resolved_alerts(client_app):
+    """
+    POST /api/alerts/webhook cleanly ignores alerts with status='resolved'.
+    """
+    webhook_payload = {
+        "status": "resolved",
+        "alerts": [
+            {
+                "status": "resolved",
+                "labels": {
+                    "alertname": "CondoSubmissionFailed",
+                    "severity": "critical",
+                },
+                "annotations": {
+                    "trace_id": uuid.uuid4().hex,
+                    "description": "Resolved incident notification from Alertmanager",
+                },
+            }
+        ],
+    }
+
+    response = client_app.post("/api/alerts/webhook", json=webhook_payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] in ("processed", "ok")
+    assert data["count"] == 0
+    assert len(data["incidentes"]) == 0
+
+    # Also verify direct single alert payload with status='resolved'
+    single_resolved = {
+        "status": "resolved",
+        "labels": {
+            "alertname": "CondoSubmissionFailed",
+            "severity": "critical",
+        },
+        "annotations": {
+            "trace_id": uuid.uuid4().hex,
+            "description": "Single resolved notification",
+        },
+    }
+    resp_single = client_app.post("/api/alerts/webhook", json=single_resolved)
+    assert resp_single.status_code == 200
+    data_single = resp_single.json()
+    assert data_single["count"] == 0
+    assert len(data_single["incidentes"]) == 0
+

@@ -114,6 +114,20 @@ def _prepare_files_for_submission(
     }
 
 
+_DEFAULT_HTTP_CLIENT: Optional[Any] = None
+
+
+def set_default_http_client(client: Optional[Any]) -> None:
+    """Set global default HTTP client for on-call responder (useful for tests and dependency injection)."""
+    global _DEFAULT_HTTP_CLIENT
+    _DEFAULT_HTTP_CLIENT = client
+
+
+def get_default_http_client() -> Optional[Any]:
+    """Retrieve global default HTTP client."""
+    return _DEFAULT_HTTP_CLIENT
+
+
 def _execute_http_post(
     url: str,
     form_data: dict[str, str],
@@ -133,10 +147,11 @@ def _execute_http_post(
     if extra_headers:
         headers.update(extra_headers)
 
+    effective_client = client if client is not None else _DEFAULT_HTTP_CLIENT
     resp = None
-    if client is not None:
+    if effective_client is not None:
         try:
-            resp = client.post(url, data=form_data, files=files, headers=headers)
+            resp = effective_client.post(url, data=form_data, files=files, headers=headers)
         except Exception as exc:
             return 500, f"Client request failed: {str(exc)}", None
     else:
@@ -145,19 +160,8 @@ def _execute_http_post(
             with httpx.Client(timeout=15.0) as http_client:
                 resp = http_client.post(url, data=form_data, files=files, headers=headers)
         except Exception as exc:
-            # If local connection refused in test environment, try mock_bitrix in-memory app
-            is_mock = os.getenv("MOCK_SUBMISSION", "true").lower() in ("true", "1", "yes")
-            if is_mock:
-                try:
-                    from starlette.testclient import TestClient
-                    from mock_bitrix.main import app as mock_bitrix_app
+            return 500, f"HTTP request failed: {str(exc)}", None
 
-                    with TestClient(mock_bitrix_app) as test_client:
-                        resp = test_client.post("/condominioressarcimento/ressarcimento/", data=form_data, files=files, headers=headers)
-                except Exception as mock_exc:
-                    return 500, f"Direct and mock execution failed: {mock_exc}", None
-            else:
-                return 500, f"HTTP request failed: {str(exc)}", None
 
     if resp is None:
         return 500, "No response received", None
