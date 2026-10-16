@@ -12,6 +12,7 @@ from app.core.telemetry import (
     get_prometheus_metrics,
     trace_step,
 )
+from app.routes.alert_webhook import router as alert_router
 
 app = FastAPI(
     title="Luas Condo Service",
@@ -21,6 +22,10 @@ app = FastAPI(
 
 # OpenTelemetry FastAPI automatic instrumentation
 FastAPIInstrumentor.instrument_app(app)
+
+# Include Alertmanager webhook router
+app.include_router(alert_router)
+
 
 
 @app.middleware("http")

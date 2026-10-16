@@ -1,0 +1,22 @@
+groups:
+  - name: condo_alerts
+    rules:
+      - alert: CondoSubmissionFailed
+        expr: increase(condo_submissions_total{status="failed"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          tier: oncall
+        annotations:
+          summary: Condo reimbursement submission failed
+          description: A condo reimbursement submission failed, user dispute not filed.
+
+      - alert: CondoSlaBreachWarning
+        expr: condo_cycle_sla_days_remaining < 3
+        for: 0m
+        labels:
+          severity: warning
+          tier: oncall
+        annotations:
+          summary: Condo cycle SLA breach warning
+          description: Condo cycle SLA has fewer than 3 days remaining before monthly reimbursement window closes.
