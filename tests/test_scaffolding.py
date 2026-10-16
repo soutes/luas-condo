@@ -34,6 +34,9 @@ def test_docker_compose_structure():
     assert has_port("prometheus", 9090), "prometheus service must expose port 9090"
     assert has_port("grafana", 3001), "grafana service must expose port 3001"
 
+    frontend_volumes = services.get("frontend", {}).get("volumes", [])
+    assert "/app/node_modules" in frontend_volumes, "frontend service must mount /app/node_modules as anonymous volume to prevent host shadowing"
+
 def test_scaffolding_files_exist():
     required_files = [
         "docker-compose.yml",
