@@ -119,3 +119,24 @@ class IncidenteOnCallResponse(IncidenteOnCallBase):
     criado_em: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# Parsed Condo Bill Schemas
+class ParsedItemRateio(BaseModel):
+    descricao: str
+    valor_unidade: Decimal
+    valor_total_condominio: Optional[Decimal] = None
+    categoria: CategoriaItem
+
+
+class ParsedCondoBill(BaseModel):
+    condominio_nome: str
+    competencia: str
+    data_vencimento: date
+    valor_total: Decimal
+    valor_ordinarias: Decimal
+    valor_extraordinarias: Decimal
+    valor_fundos: Decimal
+    valor_leituras: Decimal
+    linha_digitavel: Optional[str] = None
+    itens: list[ParsedItemRateio] = []
