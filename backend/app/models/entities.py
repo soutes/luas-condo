@@ -164,10 +164,11 @@ class SubmissaoRessarcimento(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    ciclo_id: Mapped[uuid.UUID] = mapped_column(
+    ciclo_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("ciclos_condominio.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        default=None,
     )
     contrato_numero: Mapped[str] = mapped_column(String(50), nullable=False)
     payload_enviado: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)

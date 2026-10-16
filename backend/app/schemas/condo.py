@@ -90,12 +90,12 @@ class SubmissaoRessarcimentoBase(BaseModel):
 
 
 class SubmissaoRessarcimentoCreate(SubmissaoRessarcimentoBase):
-    ciclo_id: uuid.UUID
+    ciclo_id: Optional[uuid.UUID] = None
 
 
 class SubmissaoRessarcimentoResponse(SubmissaoRessarcimentoBase):
     id: uuid.UUID
-    ciclo_id: uuid.UUID
+    ciclo_id: Optional[uuid.UUID] = None
     enviado_em: datetime
 
     model_config = ConfigDict(from_attributes=True)

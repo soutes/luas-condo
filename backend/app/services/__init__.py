@@ -24,6 +24,13 @@ from app.services.email_worker import (
     process_inbound_message,
     sync_condo_cycle,
 )
+from app.services.bitrix_submitter import (
+    SubmissionPayload,
+    SubmissionReceipt,
+    get_or_create_trace_id,
+    resolve_target_url,
+    submit_reimbursement,
+)
 from app.services.parser_boleto import (
     parse_condo_pdf,
     parse_condo_text,
@@ -37,6 +44,8 @@ __all__ = [
     "IngestedDocument",
     "IngestedEmail",
     "ItemAuditado",
+    "SubmissionPayload",
+    "SubmissionReceipt",
     "audit_condo_bill",
     "classify_attachment",
     "classify_rateio_item",
@@ -44,10 +53,13 @@ __all__ = [
     "fetch_new_condo_emails",
     "format_currency_brl",
     "generate_formatted_observations",
+    "get_or_create_trace_id",
     "parse_condo_pdf",
     "parse_condo_text",
     "parse_email_message",
     "process_inbound_message",
+    "resolve_target_url",
+    "submit_reimbursement",
     "sync_condo_cycle",
 ]
 
