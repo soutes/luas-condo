@@ -18,7 +18,8 @@ Tenants must manually audit bills, calculate the exact reimbursement, pay the bi
 - **Full-Stack Application**: FastAPI backend, PostgreSQL database, and modern React dashboard.
 - **Observability**: OpenTelemetry distributed tracing, Prometheus metrics, user-impact alerting, and an on-call self-healing responder agent.
 
-## Documentation & Design
+## Documentation, Specs & Task Tracker
 
+- **Public Task Tracker**: [GitHub Issues / Acceptance Criteria](https://github.com/soutes/luas-condo/issues)
 - **Design Specification**: [`docs/superpowers/specs/2026-10-16-condo-audit-reimbursement-design.md`](docs/superpowers/specs/2026-10-16-condo-audit-reimbursement-design.md)
 - **Implementation Plan**: [`docs/superpowers/plans/2026-10-16-condo-audit-reimbursement-plan.md`](docs/superpowers/plans/2026-10-16-condo-audit-reimbursement-plan.md)
