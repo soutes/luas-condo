@@ -102,10 +102,10 @@ def resolve_target_url(target_url: Optional[str] = None) -> str:
         return target_url
     is_mock = os.getenv("MOCK_SUBMISSION", "true").lower() in ("true", "1", "yes")
     if is_mock:
-        base = os.getenv("MOCK_BITRIX_URL", "http://localhost:8080")
-        if not base.endswith("/condominioressarcimento/ressarcimento/") and not base.endswith("/"):
+        base = os.getenv("MOCK_BITRIX_URL", "http://localhost:8080").rstrip("/")
+        if not base.endswith("/condominioressarcimento/ressarcimento"):
             return f"{base}/condominioressarcimento/ressarcimento/"
-        return base
+        return f"{base}/"
     return os.getenv(
         "IBAGY_BITRIX_URL",
         "https://ibagy.bitrix24.site/condominioressarcimento/ressarcimento/",
@@ -250,24 +250,47 @@ async def _submit_via_browser(
     os.makedirs(screen_dir, exist_ok=True)
     screenshot_path = os.path.join(screen_dir, f"submissao_{trace_id}.png")
 
-    # Prepare temp files on disk for Playwright set_input_files if needed
+    # Validate and prepare files; fail fast if files are missing or unreadable
+    try:
+        boleto_name, boleto_data = _prepare_file_content(
+            payload.boleto_path,
+            payload.boleto_bytes,
+            payload.boleto_filename or "boleto.pdf",
+        )
+        comp_name, comp_data = _prepare_file_content(
+            payload.comprovante_path,
+            payload.comprovante_bytes,
+            payload.comprovante_filename or "comprovante.pdf",
+        )
+    except Exception as exc:
+        return SubmissionReceipt(
+            status=StatusSubmissao.ERRO,
+            protocolo=None,
+            mensagem=f"Erro ao preparar arquivos para submissao: {str(exc)}",
+            screenshot_path=None,
+            trace_id=trace_id,
+        )
+
+    # Prepare temp files on disk for Playwright set_input_files if bytes were supplied
     temp_dir_obj = None
     try:
-        boleto_file = payload.boleto_path
-        if not boleto_file or not os.path.exists(boleto_file):
+        if payload.boleto_path and os.path.exists(payload.boleto_path):
+            boleto_file = payload.boleto_path
+        else:
             if temp_dir_obj is None:
                 temp_dir_obj = tempfile.TemporaryDirectory()
-            boleto_file = os.path.join(temp_dir_obj.name, payload.boleto_filename or "boleto.pdf")
+            boleto_file = os.path.join(temp_dir_obj.name, boleto_name)
             with open(boleto_file, "wb") as f:
-                f.write(payload.boleto_bytes or b"")
+                f.write(boleto_data)
 
-        comp_file = payload.comprovante_path
-        if not comp_file or not os.path.exists(comp_file):
+        if payload.comprovante_path and os.path.exists(payload.comprovante_path):
+            comp_file = payload.comprovante_path
+        else:
             if temp_dir_obj is None:
                 temp_dir_obj = tempfile.TemporaryDirectory()
-            comp_file = os.path.join(temp_dir_obj.name, payload.comprovante_filename or "comprovante.pdf")
+            comp_file = os.path.join(temp_dir_obj.name, comp_name)
             with open(comp_file, "wb") as f:
-                f.write(payload.comprovante_bytes or b"")
+                f.write(comp_data)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)

@@ -43,6 +43,7 @@ from app.models.entities import (
 from app.services.bitrix_submitter import (
     SubmissionPayload,
     SubmissionReceipt,
+    resolve_target_url,
     submit_reimbursement,
 )
 from mock_bitrix.main import app as mock_bitrix_app
@@ -437,3 +438,69 @@ def test_submit_reimbursement_browser_detects_altered_selector(
         assert "contrato" in receipt.mensagem.lower()
 
     asyncio.run(run())
+
+
+def test_submit_reimbursement_browser_fails_fast_on_missing_file(db_session: Session):
+    """Playwright submission fails fast with ERRO when local file path does not exist."""
+    async def run():
+        payload = SubmissionPayload(
+            nome="Luiz Soutes",
+            email="luiz@example.com",
+            telefone="55 48 99999-9999",
+            contrato="09638.003.03",
+            boleto_path="/nonexistent/path/to/missing_boleto.pdf",
+            comprovante_bytes=b"%PDF-1.4 dummy",
+        )
+
+        receipt = await submit_reimbursement(
+            payload=payload,
+            db_session=db_session,
+            target_url="http://localhost:8080/condominioressarcimento/ressarcimento/",
+            use_browser=True,
+        )
+
+        assert receipt.status == StatusSubmissao.ERRO
+        assert receipt.protocolo is None
+        assert "arquivo nao encontrado" in receipt.mensagem.lower()
+        assert receipt.screenshot_path is None
+
+    asyncio.run(run())
+
+
+def test_submit_reimbursement_http_fails_fast_on_missing_file(db_session: Session):
+    """HTTP submission fails fast with ERRO when local file path does not exist."""
+    async def run():
+        payload = SubmissionPayload(
+            nome="Luiz Soutes",
+            email="luiz@example.com",
+            telefone="55 48 99999-9999",
+            contrato="09638.003.03",
+            boleto_path="/nonexistent/path/to/missing_boleto.pdf",
+            comprovante_bytes=b"%PDF-1.4 dummy",
+        )
+
+        receipt = await submit_reimbursement(
+            payload=payload,
+            db_session=db_session,
+            target_url="http://testserver/condominioressarcimento/ressarcimento/",
+            use_browser=False,
+        )
+
+        assert receipt.status == StatusSubmissao.ERRO
+        assert receipt.protocolo is None
+        assert "arquivo nao encontrado" in receipt.mensagem.lower()
+
+    asyncio.run(run())
+
+
+def test_resolve_target_url_normalizes_trailing_slashes(monkeypatch):
+    """resolve_target_url correctly appends endpoint path even when base URL has trailing slash."""
+    monkeypatch.setenv("MOCK_SUBMISSION", "true")
+    monkeypatch.setenv("MOCK_BITRIX_URL", "http://mock-bitrix:8080/")
+    url = resolve_target_url()
+    assert url == "http://mock-bitrix:8080/condominioressarcimento/ressarcimento/"
+
+    monkeypatch.setenv("MOCK_BITRIX_URL", "http://mock-bitrix:8080")
+    url2 = resolve_target_url()
+    assert url2 == "http://mock-bitrix:8080/condominioressarcimento/ressarcimento/"
+
