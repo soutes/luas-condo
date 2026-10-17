@@ -72,6 +72,16 @@ def get_ciclo(ciclo_id: uuid.UUID, db: Session = Depends(get_db)) -> CicloCondom
     return ciclo
 
 
+@router.post("/sync-email")
+async def trigger_email_sync(db: Session = Depends(get_db)):
+    """
+    Manually trigger IMAP email inbox check, document extraction, and cycle synchronization.
+    """
+    from app.services.poller import execute_email_sync
+    res = await execute_email_sync(db=db, force=True)
+    return res
+
+
 @router.post("/{ciclo_id}/submeter", response_model=CicloSubmissaoResponse)
 async def submeter_ciclo(
     ciclo_id: uuid.UUID,

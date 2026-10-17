@@ -464,7 +464,7 @@ def fetch_new_condo_emails(
                 continue
 
         results: list[IngestedDocument] = []
-        for u in sorted(uid_list):
+        for u in sorted(uid_list)[-50:]:
             # Fetch message bytes using non-destructive PEEK mode
             status, fetch_data = client.uid("fetch", str(u), "(BODY.PEEK[])")
             raw_bytes = None

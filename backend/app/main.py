@@ -20,12 +20,18 @@ from app.routes.ciclos import router as ciclos_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan event handler ensuring database schema initialization."""
+    """Lifespan event handler ensuring database schema initialization and background poller."""
     try:
         init_db()
     except Exception:
         pass
-    yield
+
+    from app.services.poller import start_poller, stop_poller
+    start_poller()
+    try:
+        yield
+    finally:
+        stop_poller()
 
 
 app = FastAPI(

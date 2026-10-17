@@ -11,6 +11,7 @@ import {
   Layers,
   RefreshCw,
   Scale,
+  Mail,
 } from "lucide-react";
 
 const FALLBACK_DEFAULT_CYCLES: Ciclo[] = [
@@ -56,11 +57,28 @@ export const App: React.FC = () => {
   const [selectedCicloId, setSelectedCicloId] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [syncingEmail, setSyncingEmail] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<{
     status: string;
     protocolo?: string | null;
     mensagem: string;
   } | null>(null);
+
+  const handleSyncEmail = async () => {
+    setSyncingEmail(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch("/api/ciclos/sync-email", { method: "POST" });
+      const data = await res.json();
+      setSyncMessage(data.detail || "Verificacao de e-mail concluida");
+      await fetchCiclos();
+    } catch {
+      setSyncMessage("Erro ao sincronizar e-mail");
+    } finally {
+      setSyncingEmail(false);
+    }
+  };
 
   const fetchCiclos = async () => {
     setLoading(true);
@@ -204,6 +222,17 @@ export const App: React.FC = () => {
 
             <button
               type="button"
+              onClick={handleSyncEmail}
+              disabled={syncingEmail}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 border border-slate-700 rounded-none text-xs transition-colors"
+              title="Buscar boletos e comprovantes no e-mail agora"
+            >
+              <Mail className={`w-3.5 h-3.5 ${syncingEmail ? "animate-pulse" : ""}`} />
+              <span>{syncingEmail ? "Verificando..." : "Sincronizar E-mail"}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={fetchCiclos}
               className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-none transition-colors"
               title="Atualizar dados"
@@ -216,6 +245,19 @@ export const App: React.FC = () => {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+        {syncMessage && (
+          <div className="p-3 bg-slate-900 border border-slate-700 text-xs flex items-center justify-between text-slate-200">
+            <span>{syncMessage}</span>
+            <button
+              type="button"
+              onClick={() => setSyncMessage(null)}
+              className="text-slate-400 hover:text-slate-100 font-bold ml-4"
+            >
+              x
+            </button>
+          </div>
+        )}
+
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Reference Reimbursement Card */}
