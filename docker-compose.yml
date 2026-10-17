@@ -30,6 +30,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
       MOCK_BITRIX_URL: http://mock-bitrix:8080
       MOCK_SUBMISSION: ${MOCK_SUBMISSION:-true}
+      CONDO_PDF_PASSWORD: ${CONDO_PDF_PASSWORD:-04293}
     depends_on:
       db:
         condition: service_healthy

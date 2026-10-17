@@ -7,6 +7,7 @@ No emojis used.
 from datetime import date
 from decimal import Decimal
 import io
+import os
 from pathlib import Path
 import re
 from typing import BinaryIO, Optional, Union
@@ -19,6 +20,8 @@ from app.schemas.condo import ParsedCondoBill, ParsedItemRateio
 __all__ = [
     "ParsedCondoBill",
     "ParsedItemRateio",
+    "decrypt_pdf_bytes",
+    "extract_pdf_text",
     "parse_condo_pdf",
     "parse_condo_text",
 ]
@@ -274,24 +277,121 @@ def parse_condo_text(text: str) -> ParsedCondoBill:
     )
 
 
+def decrypt_pdf_bytes(
+    content: bytes,
+    password: Optional[str] = None,
+) -> bytes:
+    """
+    Decrypt password-protected PDF bytes using the provided password or CONDO_PDF_PASSWORD.
+    Returns decrypted PDF bytes so downstream consumers receive an unencrypted document,
+    or original bytes if not encrypted or decryption fails.
+    """
+    pwd = (
+        password
+        if password is not None
+        else os.getenv("CONDO_PDF_PASSWORD", "04293")
+    )
+    if not pwd:
+        return content
+
+    # 1. PyMuPDF (fitz) - handles AES-256 and standard PDF encryptions natively
+    try:
+        import fitz
+
+        doc = fitz.open(stream=content, filetype="pdf")
+        if doc.is_encrypted:
+            res = doc.authenticate(pwd)
+            if res > 0:
+                clean_bytes = doc.tobytes(deflate=True)
+                doc.close()
+                return clean_bytes
+        doc.close()
+    except Exception:
+        pass
+
+    # 2. PyPDF2 / pypdf fallback
+    try:
+        try:
+            import pypdf
+        except ImportError:
+            import PyPDF2 as pypdf
+
+        reader = pypdf.PdfReader(io.BytesIO(content))
+        if reader.is_encrypted:
+            res = reader.decrypt(pwd)
+            if res != 0:
+                writer = pypdf.PdfWriter()
+                for page in reader.pages:
+                    writer.add_page(page)
+                buf = io.BytesIO()
+                writer.write(buf)
+                buf.seek(0)
+                return buf.getvalue()
+    except Exception:
+        pass
+
+    return content
+
+
+def extract_pdf_text(
+    pdf_source: Union[str, Path, bytes, BinaryIO],
+    password: Optional[str] = None,
+) -> str:
+    """
+    Extract text from a PDF source (str, Path, bytes, or BinaryIO),
+    supporting password-protected files via CONDO_PDF_PASSWORD environment variable or explicit password.
+    """
+    pwd = (
+        password
+        if password is not None
+        else os.getenv("CONDO_PDF_PASSWORD", "04293")
+    )
+
+    source = pdf_source
+    if isinstance(source, bytes) and pwd:
+        source = decrypt_pdf_bytes(source, password=pwd)
+
+    def _open_pdf(src, p_word):
+        if isinstance(src, (str, Path)):
+            return pdfplumber.open(str(src), password=p_word)
+        elif isinstance(src, bytes):
+            return pdfplumber.open(io.BytesIO(src), password=p_word)
+        else:
+            if hasattr(src, "seek"):
+                src.seek(0)
+            return pdfplumber.open(src, password=p_word)
+
+    # Attempt 1: open with password
+    try:
+        with _open_pdf(source, pwd) as pdf:
+            pages_text = [page.extract_text() or "" for page in pdf.pages]
+            return "\n".join(pages_text)
+    except Exception:
+        pass
+
+    # Attempt 2: open without password (in case unencrypted)
+    try:
+        with _open_pdf(pdf_source, None) as pdf:
+            pages_text = [page.extract_text() or "" for page in pdf.pages]
+            return "\n".join(pages_text)
+    except Exception:
+        pass
+
+    # Attempt 3: re-attempt with explicit password so proper exception is raised if invalid password
+    with _open_pdf(pdf_source, pwd) as pdf:
+        pages_text = [page.extract_text() or "" for page in pdf.pages]
+        return "\n".join(pages_text)
+
+
 def parse_condo_pdf(
     pdf_source: Union[str, Path, bytes, BinaryIO],
+    password: Optional[str] = None,
 ) -> ParsedCondoBill:
     """
     Extract text from a PDF condo bill and parse it deterministically.
     Supports file path (str/Path), raw bytes, or stream.
+    Accepts optional password parameter (defaults to CONDO_PDF_PASSWORD or '04293').
     """
-    if isinstance(pdf_source, (str, Path)):
-        with pdfplumber.open(str(pdf_source)) as pdf:
-            pages_text = [page.extract_text() or "" for page in pdf.pages]
-            full_text = "\n".join(pages_text)
-    elif isinstance(pdf_source, bytes):
-        with pdfplumber.open(io.BytesIO(pdf_source)) as pdf:
-            pages_text = [page.extract_text() or "" for page in pdf.pages]
-            full_text = "\n".join(pages_text)
-    else:
-        with pdfplumber.open(pdf_source) as pdf:
-            pages_text = [page.extract_text() or "" for page in pdf.pages]
-            full_text = "\n".join(pages_text)
-
+    full_text = extract_pdf_text(pdf_source, password=password)
     return parse_condo_text(full_text)
+

@@ -32,6 +32,8 @@ from app.services.bitrix_submitter import (
     submit_reimbursement,
 )
 from app.services.parser_boleto import (
+    decrypt_pdf_bytes,
+    extract_pdf_text,
     parse_condo_pdf,
     parse_condo_text,
 )
@@ -49,7 +51,9 @@ __all__ = [
     "audit_condo_bill",
     "classify_attachment",
     "classify_rateio_item",
+    "decrypt_pdf_bytes",
     "extract_documents_from_message",
+    "extract_pdf_text",
     "fetch_new_condo_emails",
     "format_currency_brl",
     "generate_formatted_observations",

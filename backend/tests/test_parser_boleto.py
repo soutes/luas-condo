@@ -18,6 +18,8 @@ from app.models.entities import CategoriaItem
 from app.services.parser_boleto import (
     ParsedCondoBill,
     ParsedItemRateio,
+    decrypt_pdf_bytes,
+    extract_pdf_text,
     parse_condo_pdf,
     parse_condo_text,
 )
@@ -192,3 +194,67 @@ def test_missing_valor_total_raises_value_error():
     text_without_total = VILLA_SALOMY_TEXT_PAGE1.replace("VALOR TOTAL: 1.154,31", "")
     with pytest.raises(ValueError, match="valor_total not found"):
         parse_condo_text(text_without_total)
+
+
+def test_parse_condo_pdf_with_password():
+    """Verify parse_condo_pdf decrypts password-protected PDF with password 04293."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 72), VILLA_SALOMY_TEXT_PAGE1)
+    enc_bytes = doc.tobytes(
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        user_pw="04293",
+        owner_pw="04293",
+    )
+    doc.close()
+
+    # Should succeed with default password fallback 04293
+    result = parse_condo_pdf(enc_bytes)
+    assert result.condominio_nome == "CONDOMINIO EDIFICIO VILLA SALOMY"
+    assert result.valor_total == Decimal("1154.31")
+
+    # Should also succeed when explicitly passing password
+    result_explicit = parse_condo_pdf(enc_bytes, password="04293")
+    assert result_explicit.valor_total == Decimal("1154.31")
+
+
+def test_parse_condo_pdf_wrong_password_raises():
+    """Verify parse_condo_pdf raises when an invalid password is provided for encrypted PDF."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 72), VILLA_SALOMY_TEXT_PAGE1)
+    enc_bytes = doc.tobytes(
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        user_pw="04293",
+        owner_pw="04293",
+    )
+    doc.close()
+
+    with pytest.raises(Exception):
+        parse_condo_pdf(enc_bytes, password="wrong_password_99999")
+
+
+def test_decrypt_pdf_bytes_helper():
+    """Verify decrypt_pdf_bytes produces an unencrypted PDF stream from encrypted input."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 72), "Sample condo content")
+    enc_bytes = doc.tobytes(
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        user_pw="04293",
+        owner_pw="04293",
+    )
+    doc.close()
+
+    decrypted = decrypt_pdf_bytes(enc_bytes, password="04293")
+    check_doc = fitz.open(stream=decrypted, filetype="pdf")
+    assert check_doc.is_encrypted is False
+    assert "Sample condo content" in check_doc[0].get_text()
+    check_doc.close()
+

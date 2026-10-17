@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import CicloCondominio, ItemRateio, StatusCiclo
 from app.services.audit_engine import audit_condo_bill
-from app.services.parser_boleto import parse_condo_pdf
+from app.services.parser_boleto import (
+    decrypt_pdf_bytes,
+    extract_pdf_text,
+    parse_condo_pdf,
+)
 
 __all__ = [
     "DocumentType",
@@ -101,14 +105,10 @@ def _decode_header_str(header_val: Optional[str]) -> str:
     return "".join(decoded)
 
 
-def _extract_pdf_text_safe(content: bytes) -> str:
-    """Safely attempt to extract text from PDF bytes via pdfplumber."""
+def _extract_pdf_text_safe(content: bytes, password: Optional[str] = None) -> str:
+    """Safely attempt to extract text from PDF bytes via parser_boleto extract_pdf_text."""
     try:
-        import pdfplumber
-
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            pages_text = [page.extract_text() or "" for page in pdf.pages]
-            return "\n".join(pages_text)
+        return extract_pdf_text(content, password=password)
     except Exception:
         return ""
 
@@ -513,8 +513,11 @@ def sync_condo_cycle(
 
     # 1. Process Condo Bills first
     for bill_doc in bills:
+        # Decrypt PDF if password protected before writing to disk,
+        # ensuring the archived boleto and subsequent portal submission attachment are accessible
+        decrypted_content = decrypt_pdf_bytes(bill_doc.content)
         file_path = storage_path / bill_doc.filename
-        file_path.write_bytes(bill_doc.content)
+        file_path.write_bytes(decrypted_content)
 
         parsed_bill = parse_condo_pdf(bill_doc.content)
         audit_report = audit_condo_bill(parsed_bill)

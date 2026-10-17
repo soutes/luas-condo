@@ -13,6 +13,7 @@ alembic>=1.13.1
 # Document Parsing & Processing
 pdfplumber>=0.11.0
 pypdf>=4.2.0
+PyMuPDF>=1.24.0
 
 # Browser Automation & Submission
 playwright>=1.43.0

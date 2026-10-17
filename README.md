@@ -162,11 +162,15 @@ Configure the following environment variables in `.env` or deployment orchestrat
 DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/luas_condo
 MOCK_BITRIX_URL=http://mock-bitrix:8080
 MOCK_SUBMISSION=true
+CONDO_PDF_PASSWORD=04293
 IMAP_SERVER=imap.example.com
 IMAP_USER=condo@example.com
 IMAP_PASSWORD=secret
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
+
+> [!NOTE]
+> **Password-Protected Bills**: Incoming condo bills encrypted with tenant credentials (e.g., `CONDO_PDF_PASSWORD=04293`) are automatically decrypted in memory during ingestion, parsed deterministically, and stored in decrypted format to ensure property manager reviewers can open attachments seamlessly without authentication barriers.
 
 ---
 

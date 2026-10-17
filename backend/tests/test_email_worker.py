@@ -425,3 +425,54 @@ def test_sync_condo_cycle_disambiguation_multi_cycle(db_session: Session, tmp_pa
     assert c2_refreshed.status_ciclo == StatusCiclo.PRONTO_PARA_ENVIO
     assert "Comprovante_PIX_Set.png" in c2_refreshed.comprovante_pix_path
 
+
+def test_email_worker_handles_password_protected_condo_bill(db_session, tmp_path):
+    """Verify email worker classifies and syncs password-protected condo bill (password: 04293)."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 72), VILLA_SALOMY_TEXT_PAGE1)
+    enc_bytes = doc.tobytes(
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        user_pw="04293",
+        owner_pw="04293",
+    )
+    doc.close()
+
+    att = EmailAttachment(
+        filename="Boleto_Edificio_Villa_Salomy.pdf",
+        content_type="application/pdf",
+        content=enc_bytes,
+    )
+
+    # 1. Classification works even though file is password-protected
+    doc_type = classify_attachment(att, email_subject="Boleto Condomínio Villa Salomy", email_body="")
+    assert doc_type == DocumentType.CONDO_BILL
+
+    # 2. Syncing creates cycle, rateio items, and writes decrypted PDF to disk
+    ingested_doc = IngestedDocument(
+        doc_type=DocumentType.CONDO_BILL,
+        filename="Boleto_Edificio_Villa_Salomy.pdf",
+        content=enc_bytes,
+        email_uid=777,
+        email_sender="syndkos@syndkos.com.br",
+        email_subject="Demonstrativo de Rateio 09/2026",
+    )
+
+    cycles = sync_condo_cycle(db_session, [ingested_doc], storage_dir=str(tmp_path))
+    assert len(cycles) == 1
+    ciclo = cycles[0]
+    assert ciclo.competencia == "2026-09"
+    assert ciclo.valor_total == Decimal("1154.31")
+    assert ciclo.valor_ressarcimento == Decimal("354.50")
+    assert ciclo.status_ciclo == StatusCiclo.PENDENTE_COMPROVANTE
+
+    # 3. Verify saved PDF on disk is decrypted so external reviewers can open it without password
+    saved_file = Path(ciclo.boleto_pdf_path)
+    assert saved_file.exists()
+    check_doc = fitz.open(saved_file)
+    assert check_doc.is_encrypted is False
+    check_doc.close()
+
+
