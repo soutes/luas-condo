@@ -167,9 +167,16 @@ async def _submit_via_http(
         "contrato": payload.contrato,
         "observacoes": payload.observacoes or "",
     }
+    comp_mime = "application/pdf"
+    comp_lower = comp_name.lower()
+    if comp_lower.endswith(".png"):
+        comp_mime = "image/png"
+    elif comp_lower.endswith((".jpg", ".jpeg")):
+        comp_mime = "image/jpeg"
+
     files = {
         "boleto": (boleto_name, boleto_data, "application/pdf"),
-        "comprovante": (comp_name, comp_data, "application/pdf"),
+        "comprovante": (comp_name, comp_data, comp_mime),
     }
     headers = {
         "x-trace-id": trace_id,
