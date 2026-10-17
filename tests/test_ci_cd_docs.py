@@ -136,6 +136,7 @@ def test_github_actions_ci_cd_workflow():
     # Rollback capability check
     workflow_str = str(content)
     assert "rollback" in workflow_str.lower(), "Workflow must include rollback parameter or step"
+    assert "playwright install" in workflow_str.lower(), "Workflow must install Playwright browser dependencies"
 
 
 def test_readme_course_rubric_and_criteria_coverage():
