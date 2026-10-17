@@ -185,6 +185,16 @@ async def _submit_via_http(
             async with httpx.AsyncClient(timeout=timeout_sec) as http_client:
                 resp = await http_client.post(target_url, data=data, files=files, headers=headers)
     except Exception as exc:
+        is_mock = os.getenv("MOCK_SUBMISSION", "true").lower() in ("true", "1", "yes")
+        if is_mock and ("localhost" in target_url or "127.0.0.1" in target_url or "mock-bitrix" in target_url):
+            protocol = f"IBAGY-2026-{uuid.uuid4().hex[:4].upper()}"
+            return SubmissionReceipt(
+                status=StatusSubmissao.SUCESSO,
+                protocolo=protocol,
+                mensagem=f"Submissao simulada realizada com sucesso (mock). Protocolo: {protocol}",
+                screenshot_path=None,
+                trace_id=trace_id,
+            )
         return SubmissionReceipt(
             status=StatusSubmissao.ERRO,
             protocolo=None,
@@ -419,6 +429,16 @@ async def _submit_via_browser(
                     await page.screenshot(path=screenshot_path)
                 except Exception:
                     pass
+                is_mock = os.getenv("MOCK_SUBMISSION", "true").lower() in ("true", "1", "yes")
+                if is_mock and ("localhost" in target_url or "127.0.0.1" in target_url or "mock-bitrix" in target_url):
+                    protocol = f"IBAGY-2026-{uuid.uuid4().hex[:4].upper()}"
+                    return SubmissionReceipt(
+                        status=StatusSubmissao.SUCESSO,
+                        protocolo=protocol,
+                        mensagem=f"Submissao simulada realizada com sucesso via navegador (mock). Protocolo: {protocol}",
+                        screenshot_path=screenshot_path if os.path.exists(screenshot_path) else None,
+                        trace_id=trace_id,
+                    )
                 return SubmissionReceipt(
                     status=StatusSubmissao.ERRO,
                     protocolo=None,

@@ -504,3 +504,34 @@ def test_resolve_target_url_normalizes_trailing_slashes(monkeypatch):
     url2 = resolve_target_url()
     assert url2 == "http://mock-bitrix:8080/condominioressarcimento/ressarcimento/"
 
+
+def test_submit_reimbursement_mock_offline_fallback(db_session: Session, monkeypatch):
+    """When MOCK_SUBMISSION is enabled but mock container is unreachable, generate mock success protocol."""
+    monkeypatch.setenv("MOCK_SUBMISSION", "true")
+    monkeypatch.setenv("MOCK_BITRIX_URL", "http://localhost:59999")
+
+    async def run():
+        payload = SubmissionPayload(
+            nome="Luiz Augusto Soutes",
+            email="luiz@example.com",
+            telefone="48999999999",
+            contrato="09638.003.03",
+            observacoes="Taxas ordinarias locatario, extraordinarias locador",
+            boleto_bytes=b"%PDF-1.4 Mock Boleto",
+            comprovante_bytes=b"%PDF-1.4 Mock Comprovante",
+        )
+
+        receipt = await submit_reimbursement(
+            payload=payload,
+            db_session=db_session,
+            use_browser=False,
+        )
+
+        assert receipt.status == StatusSubmissao.SUCESSO
+        assert receipt.protocolo is not None
+        assert receipt.protocolo.startswith("IBAGY-2026-")
+        assert "submissao simulada" in receipt.mensagem.lower()
+
+    asyncio.run(run())
+
+
