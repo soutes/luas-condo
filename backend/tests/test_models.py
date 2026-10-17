@@ -13,7 +13,7 @@ backend_dir = Path(__file__).resolve().parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from app.core.database import Base, get_db, init_db
+from app.core.database import Base, get_db, init_db, parse_database_url
 from app.models.entities import (
     CategoriaItem,
     CicloCondominio,
@@ -387,5 +387,39 @@ def test_database_init_db_and_get_db():
     default_db = Path("condo.db")
     if default_db.exists():
         default_db.unlink()
+
+
+def test_parse_database_url_scenarios(monkeypatch):
+    from sqlalchemy import URL
+    from sqlalchemy.engine import make_url
+
+    # Case 1: default fallback to SQLite
+    monkeypatch.delenv("POSTGRES_HOST", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    url_default = parse_database_url()
+    assert str(url_default) == "sqlite:///./condo.db"
+
+    # Case 2: password containing @ symbol in DATABASE_URL
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg2://postgres:@luascondo@db:5432/luas_condo")
+    url_at = parse_database_url()
+    assert isinstance(url_at, str)
+    parsed = make_url(url_at)
+    assert parsed.host == "db"
+    assert parsed.username == "postgres"
+    assert parsed.password == "@luascondo"
+
+    # Case 3: discrete POSTGRES_HOST takes precedence and encodes special characters safely
+    monkeypatch.setenv("POSTGRES_HOST", "db")
+    monkeypatch.setenv("POSTGRES_USER", "luas_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "complex@pass#2026")
+    monkeypatch.setenv("POSTGRES_PORT", "5432")
+    monkeypatch.setenv("POSTGRES_DB", "luas_condo")
+    url_discrete = parse_database_url()
+    assert isinstance(url_discrete, URL)
+    assert url_discrete.host == "db"
+    assert url_discrete.username == "luas_user"
+    assert url_discrete.password == "complex@pass#2026"
+    assert url_discrete.database == "luas_condo"
+
 
 

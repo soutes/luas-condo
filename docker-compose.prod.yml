@@ -30,6 +30,11 @@ services:
     ports:
       - "8000:8000"
     environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-luas_condo}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
       MOCK_SUBMISSION: ${MOCK_SUBMISSION:-false}
       IBAGY_BITRIX_URL: ${IBAGY_BITRIX_URL:-https://ibagy.bitrix24.site/condominioressarcimento/ressarcimento/}
