@@ -59,7 +59,7 @@ Luas Condo is designed as a distributed, containerized micro-service application
   - `app.routes.ciclos`: REST API endpoints for condo cycle management and submission dispatch.
   - `app.routes.alerts`: Webhook receiver for Prometheus Alertmanager notifications.
   - `app.services.parser_boleto`: Deterministic PDF parsing with pdfplumber and PyMuPDF, supporting password-protected bills (CONDO_PDF_PASSWORD=04293) and automatic in-memory decryption.
-  - `app.services.email_worker`: Idempotent IMAP ingestion worker following luas_finance read-only pattern.
+  - `app.services.email_worker`: Idempotent IMAP ingestion worker following luas_finance read-only pattern, with specialized parser for Syndkos sender (naoresponda@syndkos.com.br) and monthly billing subject patterns.
   - `app.agents.audit_engine`: Deterministic segregation rules according to Brazilian Law 8.245/1991.
   - `app.agents.bitrix_submitter`: Browser automation with Playwright and fallback HTTP client.
   - `app.agents.on_call`: Self-healing remediation engine and incident manager.

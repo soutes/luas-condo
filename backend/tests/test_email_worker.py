@@ -25,6 +25,7 @@ if str(backend_dir) not in sys.path:
 from app.core.database import Base
 from app.models.entities import CicloCondominio, ItemRateio, StatusCiclo
 from app.services.email_worker import (
+    SYNDKOS_DEFAULT_SENDER,
     DocumentType,
     EmailAttachment,
     EmailWorker,
@@ -33,6 +34,7 @@ from app.services.email_worker import (
     classify_attachment,
     fetch_new_condo_emails,
     parse_email_message,
+    parse_syndkos_email_subject,
     process_inbound_message,
     sync_condo_cycle,
 )
@@ -474,5 +476,60 @@ def test_email_worker_handles_password_protected_condo_bill(db_session, tmp_path
     check_doc = fitz.open(saved_file)
     assert check_doc.is_encrypted is False
     check_doc.close()
+
+
+def test_syndkos_email_subject_parser_and_sender_matching():
+    """Verify parse_syndkos_email_subject extracts dates, competence, and recipient accurately."""
+    subject = (
+        "Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, "
+        "Segue em anexo seu boleto com vencimento em 10/10/2026 referente a 09/2026"
+    )
+    parsed = parse_syndkos_email_subject(subject)
+    assert parsed is not None
+    assert parsed["condomino"] == "LUIZ AUGUSTO SOUTES"
+    assert parsed["data_vencimento"] == date(2026, 10, 10)
+    assert parsed["competencia"] == "2026-09"
+    assert parsed["raw_vencimento"] == "10/10/2026"
+    assert parsed["raw_competencia"] == "09/2026"
+
+
+def test_classify_attachment_with_syndkos_sender_and_subject():
+    """Verify inbound email from naoresponda@syndkos.com.br with standard subject is classified as CONDO_BILL."""
+    subject = (
+        "Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, "
+        "Segue em anexo seu boleto com vencimento em 10/11/2026 referente a 10/2026"
+    )
+    sender = SYNDKOS_DEFAULT_SENDER
+    assert sender == "naoresponda@syndkos.com.br"
+
+    att = EmailAttachment(
+        filename="Boleto_Novembro.pdf",
+        content_type="application/pdf",
+        content=b"%PDF-1.4 raw binary without ocr",
+    )
+    doc_type = classify_attachment(att, email_subject=subject, email_sender=sender)
+    assert doc_type == DocumentType.CONDO_BILL
+
+
+def test_process_inbound_syndkos_email_full_flow():
+    """Verify process_inbound_message with official Syndkos sender and subject pattern."""
+    msg = {
+        "uid": 888,
+        "from": "naoresponda@syndkos.com.br",
+        "subject": "Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, Segue em anexo seu boleto com vencimento em 10/10/2026 referente a 09/2026",
+        "attachments": [
+            {
+                "filename": "boleto_villa_salomy.pdf",
+                "content_type": "application/pdf",
+                "content": b"%PDF-1.4 sample content",
+            }
+        ],
+    }
+    result = process_inbound_message(msg)
+    assert isinstance(result, IngestedDocument)
+    assert result.doc_type == DocumentType.CONDO_BILL
+    assert result.email_sender == "naoresponda@syndkos.com.br"
+    assert "09/2026" in result.email_subject
+
 
 

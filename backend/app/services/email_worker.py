@@ -33,10 +33,12 @@ __all__ = [
     "EmailWorker",
     "IngestedDocument",
     "IngestedEmail",
+    "SYNDKOS_DEFAULT_SENDER",
     "classify_attachment",
     "extract_documents_from_message",
     "fetch_new_condo_emails",
     "parse_email_message",
+    "parse_syndkos_email_subject",
     "process_inbound_message",
     "sync_condo_cycle",
 ]
@@ -113,16 +115,75 @@ def _extract_pdf_text_safe(content: bytes, password: Optional[str] = None) -> st
         return ""
 
 
+SYNDKOS_DEFAULT_SENDER = os.getenv(
+    "SYNDKOS_EMAIL_SENDER", "naoresponda@syndkos.com.br"
+)
+
+
+def parse_syndkos_email_subject(subject: str) -> Optional[dict[str, Any]]:
+    """
+    Parse Syndkos condo bill email subject pattern:
+    'Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, Segue em anexo seu boleto com vencimento em 10/10/2026 referente a 09/2026'
+    Returns dict containing 'condomino', 'data_vencimento' (date), 'competencia' ('YYYY-MM'),
+    'raw_vencimento', 'raw_competencia', or None if pattern does not match.
+    """
+    if not subject:
+        return None
+
+    pattern = re.compile(
+        r"Prezado\(a\)\s+cond[oô]mino\(a\)\s+([^,]+),\s*"
+        r"Segue\s+em\s+anexo\s+seu\s+boleto\s+com\s+vencimento\s+em\s+(\d{2}/\d{2}/\d{4})\s+"
+        r"referente\s+a\s+(\d{2}/\d{4})",
+        re.IGNORECASE,
+    )
+    m = pattern.search(subject)
+    if not m:
+        pattern_relaxed = re.compile(
+            r"vencimento\s+em\s+(\d{2}/\d{2}/\d{4})\s+referente\s+a\s+(\d{2}/\d{4})",
+            re.IGNORECASE,
+        )
+        m_rel = pattern_relaxed.search(subject)
+        if not m_rel:
+            return None
+        venc_str, comp_str = m_rel.group(1), m_rel.group(2)
+        condomino = "LUIZ AUGUSTO SOUTES"
+    else:
+        condomino = m.group(1).strip()
+        venc_str, comp_str = m.group(2), m.group(3)
+
+    try:
+        d, m_int, y = [int(p) for p in venc_str.split("/")]
+        data_vencimento = date(y, m_int, d)
+    except Exception:
+        data_vencimento = None
+
+    try:
+        cm, cy = comp_str.split("/")
+        competencia = f"{cy}-{cm}"
+    except Exception:
+        competencia = comp_str
+
+    return {
+        "condomino": condomino,
+        "data_vencimento": data_vencimento,
+        "competencia": competencia,
+        "raw_vencimento": venc_str,
+        "raw_competencia": comp_str,
+    }
+
+
 def classify_attachment(
     attachment: EmailAttachment,
     email_subject: str = "",
     email_body: str = "",
+    email_sender: str = "",
 ) -> DocumentType:
     """
     Classify an email attachment as CONDO_BILL, PIX_RECEIPT, or UNKNOWN.
 
     CONDO_BILL: PDF containing keywords like DEMONSTRATIVO, SYNDKOS, VILLA SALOMY,
-    CONDOMINIO, or rateio sections.
+    CONDOMINIO, or matching the official Syndkos sender (naoresponda@syndkos.com.br)
+    or standard subject pattern 'Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES...'.
     PIX_RECEIPT: PDF or image (PNG/JPEG) containing keywords like COMPROVANTE, PIX,
     TRANSFERENCIA, PAGAMENTO, or matching condo bill amounts (e.g. 1.154,31).
     """
@@ -139,6 +200,15 @@ def classify_attachment(
         or attachment.content.startswith(b"\x89PNG")
         or attachment.content.startswith(b"\xff\xd8")
     )
+
+    # Fast path: official Syndkos sender or matching subject pattern
+    syndkos_meta = parse_syndkos_email_subject(email_subject)
+    is_syndkos_sender = (
+        "SYNDKOS" in email_sender.upper()
+        or SYNDKOS_DEFAULT_SENDER.upper() in email_sender.upper()
+    )
+    if is_pdf and (is_syndkos_sender or syndkos_meta is not None):
+        return DocumentType.CONDO_BILL
 
     extracted_pdf_text = ""
     if is_pdf:
@@ -253,7 +323,12 @@ def extract_documents_from_message(
 
     docs: list[IngestedDocument] = []
     for att in attachments:
-        doc_type = classify_attachment(att, email_subject=subject, email_body=body)
+        doc_type = classify_attachment(
+            att,
+            email_subject=subject,
+            email_body=body,
+            email_sender=sender,
+        )
         docs.append(
             IngestedDocument(
                 doc_type=doc_type,

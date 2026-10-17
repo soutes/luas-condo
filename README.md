@@ -166,11 +166,14 @@ CONDO_PDF_PASSWORD=04293
 IMAP_SERVER=imap.example.com
 IMAP_USER=condo@example.com
 IMAP_PASSWORD=secret
+SYNDKOS_EMAIL_SENDER=naoresponda@syndkos.com.br
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
 > [!NOTE]
 > **Password-Protected Bills**: Incoming condo bills encrypted with tenant credentials (e.g., `CONDO_PDF_PASSWORD=04293`) are automatically decrypted in memory during ingestion, parsed deterministically, and stored in decrypted format to ensure property manager reviewers can open attachments seamlessly without authentication barriers.
+>
+> **Syndkos Inbound Pattern**: Condominium bills arrive from sender `naoresponda@syndkos.com.br` with subject pattern `Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, Segue em anexo seu boleto com vencimento em {vencimento} referente a {competencia}`. The IMAP worker uses this pattern to extract due dates and competence (`YYYY-MM`) directly for fast-path classification and cross-validation against the PDF demonstrativo.
 
 ---
 
