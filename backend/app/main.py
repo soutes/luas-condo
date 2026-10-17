@@ -4,9 +4,11 @@ Exposes endpoints for health checks, Prometheus metrics, and OpenTelemetry instr
 No emojis used.
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
+from app.core.database import init_db
 from app.core.telemetry import (
     get_current_trace_id,
     get_prometheus_metrics,
@@ -15,10 +17,22 @@ from app.core.telemetry import (
 from app.routes.alert_webhook import router as alert_router
 from app.routes.ciclos import router as ciclos_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler ensuring database schema initialization."""
+    try:
+        init_db()
+    except Exception:
+        pass
+    yield
+
+
 app = FastAPI(
     title="Luas Condo Service",
     description="Condo Audit and Reimbursement Backend Automation Service",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # OpenTelemetry FastAPI automatic instrumentation
