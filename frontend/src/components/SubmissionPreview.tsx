@@ -1,0 +1,248 @@
+import React, { useState, useEffect } from "react";
+import type { Ciclo } from "../types";
+import { formatBRL, formatDateBR } from "../utils";
+import {
+  Send,
+  FileCheck,
+  AlertCircle,
+  Paperclip,
+  CheckCircle,
+  Loader2,
+  Copy,
+  Check,
+} from "lucide-react";
+
+export interface SubmissionPreviewProps {
+  ciclo: Ciclo;
+  isSubmitting: boolean;
+  onSubmit: (customObs?: string) => Promise<void>;
+  submissionResult: {
+    status: string;
+    protocolo?: string | null;
+    mensagem: string;
+  } | null;
+}
+
+export const SubmissionPreview: React.FC<SubmissionPreviewProps> = ({
+  ciclo,
+  isSubmitting,
+  onSubmit,
+  submissionResult,
+}) => {
+  const [copied, setCopied] = useState(false);
+
+  // Generate dynamic formatted observations memo text
+  const locadorItems = (ciclo.itens || []).filter(
+    (i) => i.responsabilidade === "LOCADOR"
+  );
+
+  const defaultMemo = [
+    "Solicitacao de ressarcimento de despesas condominiais de responsabilidade do locador (Art. 22 da Lei 8.245/91).",
+    `Condominio: ${ciclo.condominio_nome}`,
+    `Competencia: ${ciclo.competencia} | Vencimento: ${formatDateBR(ciclo.data_vencimento)}`,
+    "",
+    "Itens de responsabilidade do locador para deducao no proximo aluguel:",
+    ...(locadorItems.length > 0
+      ? locadorItems.map(
+          (it) =>
+            `- ${it.descricao}: ${formatBRL(it.valor_unidade)} (${it.justificativa_legal || "Art. 22 da Lei 8.245/91"})`
+        )
+      : ["- Sem despesas do locador apuradas"]),
+    "",
+    `Valor total a ser ressarcido / deduzido: ${formatBRL(ciclo.valor_ressarcimento)}`,
+    "",
+    "Seguem em anexo o boleto condominial detalhado e o respectivo comprovante de pagamento.",
+  ].join("\n");
+
+  const [memo, setMemo] = useState(defaultMemo);
+
+  useEffect(() => {
+    setMemo(defaultMemo);
+  }, [ciclo.id]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(memo);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const hasComprovante = Boolean(ciclo.comprovante_pix_path);
+  const isEnviado = ciclo.status_ciclo === "ENVIADO";
+  const latestSubmissao = ciclo.submissoes && ciclo.submissoes.length > 0
+    ? ciclo.submissoes[ciclo.submissoes.length - 1]
+    : null;
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-none overflow-hidden">
+      {/* Header */}
+      <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Send className="w-5 h-5 text-[#f7941d]" />
+          <h3 className="text-lg font-bold text-slate-100 tracking-wide">
+            Submissao Bitrix24 / Ibagy
+          </h3>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-none transition-colors"
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Copiado</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copiar Texto</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4 sm:p-5 space-y-5">
+        {/* Submission Result Alerts */}
+        {submissionResult && (
+          <div
+            className={`p-4 border rounded-none flex items-start gap-3 ${
+              submissionResult.status === "SUCESSO"
+                ? "bg-emerald-950/40 border-emerald-600/60 text-emerald-200"
+                : "bg-red-950/40 border-red-600/60 text-red-200"
+            }`}
+          >
+            {submissionResult.status === "SUCESSO" ? (
+              <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-1">
+              <h5 className="text-xs font-bold uppercase tracking-wider">
+                {submissionResult.status === "SUCESSO"
+                  ? "Submissao Protocolada com Sucesso"
+                  : "Falha na Submissao"}
+              </h5>
+              <p className="text-xs">{submissionResult.mensagem}</p>
+              {submissionResult.protocolo && (
+                <div className="text-xs font-mono font-bold mt-2 inline-block bg-slate-950 px-2.5 py-1 border border-emerald-500/40">
+                  Protocolo: {submissionResult.protocolo}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Existing Submission History if already sent */}
+        {isEnviado && !submissionResult && latestSubmissao && (
+          <div className="p-4 bg-emerald-950/20 border border-emerald-700/40 text-emerald-300 rounded-none flex items-start gap-3">
+            <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div>
+              <h5 className="text-xs font-bold uppercase tracking-wider">
+                Solicitacao Ja Enviada
+              </h5>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Protocolo:{" "}
+                <span className="font-mono font-bold text-emerald-400">
+                  {latestSubmissao.protocolo_retorno || "Confirmado"}
+                </span>{" "}
+                em {formatDateBR(latestSubmissao.enviado_em)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Formatted Observations Memo Preview */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+            Texto do Memorando / Observacoes
+          </label>
+          <textarea
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            rows={7}
+            className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs font-mono p-3 rounded-none focus:outline-none focus:border-[#f7941d] leading-relaxed resize-y"
+          />
+        </div>
+
+        {/* Attachments Section */}
+        <div>
+          <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+            Anexos Obrigatorios
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Boleto PDF */}
+            <div className="p-3 bg-slate-950 border border-slate-800 rounded-none flex items-center justify-between">
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                <Paperclip className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="truncate">
+                  <span className="text-xs font-medium text-slate-200 block truncate">
+                    Boleto Condominial
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono truncate block">
+                    {ciclo.boleto_pdf_path.split(/[\\/]/).pop()}
+                  </span>
+                </div>
+              </div>
+              <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold bg-emerald-950/40 text-emerald-400 border border-emerald-700/40 rounded-none shrink-0 ml-2">
+                Anexo OK
+              </span>
+            </div>
+
+            {/* Comprovante PIX */}
+            <div className="p-3 bg-slate-950 border border-slate-800 rounded-none flex items-center justify-between">
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                <FileCheck className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="truncate">
+                  <span className="text-xs font-medium text-slate-200 block truncate">
+                    Comprovante PIX
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono truncate block">
+                    {ciclo.comprovante_pix_path
+                      ? ciclo.comprovante_pix_path.split(/[\\/]/).pop()
+                      : "Pendente de conciliacao"}
+                  </span>
+                </div>
+              </div>
+              {hasComprovante ? (
+                <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold bg-emerald-950/40 text-emerald-400 border border-emerald-700/40 rounded-none shrink-0 ml-2">
+                  Confirmado
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2 py-0.5 text-[10px] font-semibold bg-amber-950/40 text-amber-400 border border-amber-700/40 rounded-none shrink-0 ml-2">
+                  Pendente
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Action Button */}
+        <div className="pt-2">
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => onSubmit(memo)}
+            className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#f7941d] hover:bg-[#e08316] text-slate-950 font-bold text-sm uppercase tracking-wider rounded-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-[#f7941d]/10"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                <span>Enviando para Bitrix24...</span>
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" />
+                <span>
+                  {isEnviado ? "Reenviar para Bitrix24" : "Aprovar e Enviar para Ibagy"}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

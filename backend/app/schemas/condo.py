@@ -70,14 +70,6 @@ class CicloCondominioUpdate(BaseModel):
     status_ciclo: Optional[StatusCiclo] = None
 
 
-class CicloCondominioResponse(CicloCondominioBase):
-    id: uuid.UUID
-    criado_em: datetime
-    itens: list[ItemRateioResponse] = []
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 # SubmissaoRessarcimento Schemas
 class SubmissaoRessarcimentoBase(BaseModel):
     contrato_numero: str
@@ -99,6 +91,33 @@ class SubmissaoRessarcimentoResponse(SubmissaoRessarcimentoBase):
     enviado_em: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CicloCondominioResponse(CicloCondominioBase):
+    id: uuid.UUID
+    criado_em: datetime
+    itens: list[ItemRateioResponse] = []
+    submissoes: list[SubmissaoRessarcimentoResponse] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CicloSubmissaoRequest(BaseModel):
+    nome: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    contrato: Optional[str] = None
+    observacoes: Optional[str] = None
+    use_browser: bool = False
+
+
+class CicloSubmissaoResponse(BaseModel):
+    status: StatusSubmissao
+    protocolo: Optional[str] = None
+    mensagem: str
+    screenshot_path: Optional[str] = None
+    trace_id: str
+    ciclo_id: uuid.UUID
 
 
 # IncidenteOnCall Schemas

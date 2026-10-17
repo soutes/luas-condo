@@ -13,6 +13,7 @@ from app.core.telemetry import (
     trace_step,
 )
 from app.routes.alert_webhook import router as alert_router
+from app.routes.ciclos import router as ciclos_router
 
 app = FastAPI(
     title="Luas Condo Service",
@@ -23,8 +24,9 @@ app = FastAPI(
 # OpenTelemetry FastAPI automatic instrumentation
 FastAPIInstrumentor.instrument_app(app)
 
-# Include Alertmanager webhook router
+# Include API routers
 app.include_router(alert_router)
+app.include_router(ciclos_router)
 
 
 
