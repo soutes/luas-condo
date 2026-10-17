@@ -43,6 +43,10 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+    networks:
+      - default
+      - web
+
 
   mock-bitrix:
     build:
@@ -64,12 +68,15 @@ services:
     ports:
       - "5173:5173"
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_URL: http://backend:8000
     depends_on:
       - backend
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    networks:
+      - default
+      - web
 
   prometheus:
     image: prom/prometheus:v2.51.0
@@ -95,3 +102,9 @@ services:
 
 volumes:
   pgdata:
+
+networks:
+  default:
+  web:
+    external: true
+
