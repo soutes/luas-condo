@@ -1,0 +1,248 @@
+diff --git a/backend/app/agents/__init__.py b/backend/app/agents/__init__.py
+index 06e9fb2..08e281e 100644
+--- a/backend/app/agents/__init__.py
++++ b/backend/app/agents/__init__.py
+@@ -4,13 +4,18 @@ No emojis used.
+ """
+ 
+ from app.agents.on_call import (
++    get_default_http_client,
+     handle_incident_alert,
+     remediate_http_5xx_timeout,
+     remediate_selector_mismatch,
++    set_default_http_client,
+ )
+ 
+ __all__ = [
+     "handle_incident_alert",
+     "remediate_selector_mismatch",
+     "remediate_http_5xx_timeout",
++    "set_default_http_client",
++    "get_default_http_client",
+ ]
++
+diff --git a/backend/app/agents/on_call.py b/backend/app/agents/on_call.py
+index 400bbc3..aa745dc 100644
+--- a/backend/app/agents/on_call.py
++++ b/backend/app/agents/on_call.py
+@@ -114,6 +114,20 @@ def _prepare_files_for_submission(
+     }
+ 
+ 
++_DEFAULT_HTTP_CLIENT: Optional[Any] = None
++
++
++def set_default_http_client(client: Optional[Any]) -> None:
++    """Set global default HTTP client for on-call responder (useful for tests and dependency injection)."""
++    global _DEFAULT_HTTP_CLIENT
++    _DEFAULT_HTTP_CLIENT = client
++
++
++def get_default_http_client() -> Optional[Any]:
++    """Retrieve global default HTTP client."""
++    return _DEFAULT_HTTP_CLIENT
++
++
+ def _execute_http_post(
+     url: str,
+     form_data: dict[str, str],
+@@ -133,10 +147,11 @@ def _execute_http_post(
+     if extra_headers:
+         headers.update(extra_headers)
+ 
++    effective_client = client if client is not None else _DEFAULT_HTTP_CLIENT
+     resp = None
+-    if client is not None:
++    if effective_client is not None:
+         try:
+-            resp = client.post(url, data=form_data, files=files, headers=headers)
++            resp = effective_client.post(url, data=form_data, files=files, headers=headers)
+         except Exception as exc:
+             return 500, f"Client request failed: {str(exc)}", None
+     else:
+@@ -145,19 +160,8 @@ def _execute_http_post(
+             with httpx.Client(timeout=15.0) as http_client:
+                 resp = http_client.post(url, data=form_data, files=files, headers=headers)
+         except Exception as exc:
+-            # If local connection refused in test environment, try mock_bitrix in-memory app
+-            is_mock = os.getenv("MOCK_SUBMISSION", "true").lower() in ("true", "1", "yes")
+-            if is_mock:
+-                try:
+-                    from starlette.testclient import TestClient
+-                    from mock_bitrix.main import app as mock_bitrix_app
+-
+-                    with TestClient(mock_bitrix_app) as test_client:
+-                        resp = test_client.post("/condominioressarcimento/ressarcimento/", data=form_data, files=files, headers=headers)
+-                except Exception as mock_exc:
+-                    return 500, f"Direct and mock execution failed: {mock_exc}", None
+-            else:
+-                return 500, f"HTTP request failed: {str(exc)}", None
++            return 500, f"HTTP request failed: {str(exc)}", None
++
+ 
+     if resp is None:
+         return 500, "No response received", None
+diff --git a/backend/app/routes/alert_webhook.py b/backend/app/routes/alert_webhook.py
+index 886c219..2e4f34b 100644
+--- a/backend/app/routes/alert_webhook.py
++++ b/backend/app/routes/alert_webhook.py
+@@ -31,19 +31,22 @@ def receive_alert_webhook(
+ 
+     alerts = payload.get("alerts")
+     # If standard Alertmanager payload with list of alerts
+-    if isinstance(alerts, list) and len(alerts) > 0:
++    if isinstance(alerts, list):
+         incidentes_result = []
+         for alert_item in alerts:
+-            if isinstance(alert_item, dict):
+-                incidente = handle_incident_alert(alert_item, db_session=db)
+-                incidentes_result.append({
+-                    "id": str(incidente.id),
+-                    "trace_id": incidente.trace_id,
+-                    "alerta_nome": incidente.alerta_nome,
+-                    "status": incidente.status.value,
+-                    "diagnostico": incidente.diagnostico,
+-                    "acao_executada": incidente.acao_executada,
+-                })
++            if not isinstance(alert_item, dict):
++                continue
++            if alert_item.get("status") == "resolved":
++                continue
++            incidente = handle_incident_alert(alert_item, db_session=db)
++            incidentes_result.append({
++                "id": str(incidente.id),
++                "trace_id": incidente.trace_id,
++                "alerta_nome": incidente.alerta_nome,
++                "status": incidente.status.value,
++                "diagnostico": incidente.diagnostico,
++                "acao_executada": incidente.acao_executada,
++            })
+         return {
+             "status": "processed",
+             "count": len(incidentes_result),
+@@ -51,7 +54,15 @@ def receive_alert_webhook(
+         }
+ 
+     # Handle direct single alert payload
++    if payload.get("status") == "resolved":
++        return {
++            "status": "processed",
++            "count": 0,
++            "incidentes": [],
++        }
++
+     incidente = handle_incident_alert(payload, db_session=db)
++
+     return {
+         "status": "processed",
+         "count": 1,
+diff --git a/backend/tests/test_on_call_agent.py b/backend/tests/test_on_call_agent.py
+index 20c8334..2cdcd07 100644
+--- a/backend/tests/test_on_call_agent.py
++++ b/backend/tests/test_on_call_agent.py
+@@ -14,7 +14,7 @@ import sys
+ import uuid
+ import yaml
+ import pytest
+-from starlette.testclient import TestClient
++from fastapi.testclient import TestClient
+ from sqlalchemy.pool import StaticPool
+ from sqlalchemy import create_engine
+ from sqlalchemy.orm import Session, sessionmaker
+@@ -39,6 +39,7 @@ from app.agents.on_call import (
+     handle_incident_alert,
+     remediate_selector_mismatch,
+     remediate_http_5xx_timeout,
++    set_default_http_client,
+ )
+ from app.main import app
+ from mock_bitrix.main import app as mock_bitrix_app
+@@ -64,10 +65,15 @@ def db_session():
+         Base.metadata.drop_all(bind=engine)
+ 
+ 
++@pytest.fixture
++def mock_bitrix_client():
++    """In-memory TestClient targeting mock_bitrix app."""
++    return TestClient(mock_bitrix_app)
++
+ 
+ @pytest.fixture
+-def client_app(db_session: Session):
+-    """FastAPI TestClient with overridden get_db dependency."""
++def client_app(db_session: Session, mock_bitrix_client):
++    """FastAPI TestClient with overridden get_db dependency and injected test transport."""
+     def _override_get_db():
+         try:
+             yield db_session
+@@ -75,16 +81,13 @@ def client_app(db_session: Session):
+             pass
+ 
+     app.dependency_overrides[get_db] = _override_get_db
++    set_default_http_client(mock_bitrix_client)
+     with TestClient(app) as test_client:
+         yield test_client
+     app.dependency_overrides.clear()
++    set_default_http_client(None)
+ 
+ 
+-@pytest.fixture
+-def mock_bitrix_client():
+-    """In-memory TestClient targeting mock_bitrix app."""
+-    return TestClient(mock_bitrix_app)
+-
+ 
+ # ---------------------------------------------------------------------------
+ # 1. Prometheus Alert Rules Validation
+@@ -512,3 +515,51 @@ def test_alertmanager_webhook_endpoint_escalates_unrecoverable(client_app, db_se
+     data = response.json()
+     assert "incidentes" in data
+     assert data["incidentes"][0]["status"] == "ESCALADO_HUMANO"
++
++
++def test_alertmanager_webhook_ignores_resolved_alerts(client_app):
++    """
++    POST /api/alerts/webhook cleanly ignores alerts with status='resolved'.
++    """
++    webhook_payload = {
++        "status": "resolved",
++        "alerts": [
++            {
++                "status": "resolved",
++                "labels": {
++                    "alertname": "CondoSubmissionFailed",
++                    "severity": "critical",
++                },
++                "annotations": {
++                    "trace_id": uuid.uuid4().hex,
++                    "description": "Resolved incident notification from Alertmanager",
++                },
++            }
++        ],
++    }
++
++    response = client_app.post("/api/alerts/webhook", json=webhook_payload)
++    assert response.status_code == 200
++    data = response.json()
++    assert data["status"] in ("processed", "ok")
++    assert data["count"] == 0
++    assert len(data["incidentes"]) == 0
++
++    # Also verify direct single alert payload with status='resolved'
++    single_resolved = {
++        "status": "resolved",
++        "labels": {
++            "alertname": "CondoSubmissionFailed",
++            "severity": "critical",
++        },
++        "annotations": {
++            "trace_id": uuid.uuid4().hex,
++            "description": "Single resolved notification",
++        },
++    }
++    resp_single = client_app.post("/api/alerts/webhook", json=single_resolved)
++    assert resp_single.status_code == 200
++    data_single = resp_single.json()
++    assert data_single["count"] == 0
++    assert len(data_single["incidentes"]) == 0
++

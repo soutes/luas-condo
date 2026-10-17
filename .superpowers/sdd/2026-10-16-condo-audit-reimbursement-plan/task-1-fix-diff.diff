@@ -1,0 +1,76 @@
+diff --git a/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-report.md b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-report.md
+new file mode 100644
+index 0000000..a941e2b
+--- /dev/null
++++ b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-report.md
+@@ -0,0 +1,44 @@
++# Task 1 Report: Scaffolding, Folder Structure & Docker Compose
++
++## Status
++DONE
++
++## Commits Created
++- `e57b1141573e26b459639f54c26a978229a3d73e`: `chore: scaffold repo structure and docker compose services`
++
++## Files Created
++- `docker-compose.yml`: Defines `db`, `backend`, `mock-bitrix`, `frontend`, `prometheus`, `grafana` with exact port allocations.
++- `.env.example`: Configuration template for database, bitrix submission, IMAP email poller, and telemetry.
++- `backend/Dockerfile`: Python 3.12-slim base with system dependencies, requirements install, and uvicorn command.
++- `backend/requirements.txt`: FastAPI, SQLAlchemy, Alembic, pdfplumber, Playwright, OpenTelemetry, Prometheus client, and pytest.
++- `backend/pyproject.toml`: Project metadata and pytest configuration.
++- `frontend/Dockerfile`: Node 20-alpine base with Vite development server setup.
++- `frontend/package.json`: Vite, React 18, Tailwind CSS, Lucide React, and Vitest setup.
++- `mock_bitrix/Dockerfile`: Python 3.12-slim base running mock Bitrix24 FastAPI server.
++- `mock_bitrix/requirements.txt`: Dependencies for FastAPI mock service.
++- `monitoring/prometheus.yml`: Prometheus scrape configuration targeting backend.
++- `tests/test_scaffolding.py`: Unit test verifying compose services, ports, required scaffolding files, and no-emoji rule.
++
++## Test Execution Output
++```
++============================= test session starts =============================
++platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\luiz_\AppData\Local\Programs\Python\Python314\python.exe
++cachedir: .pytest_cache
++rootdir: C:\Users\luiz_\_DS\luas_projects\luas_condo
++plugins: anyio-4.13.0
++collecting ... collected 4 items
++
++tests/test_scaffolding.py::test_docker_compose_structure PASSED          [ 25%]
++tests/test_scaffolding.py::test_scaffolding_files_exist PASSED           [ 50%]
++tests/test_scaffolding.py::test_frontend_package_json_valid PASSED       [ 75%]
++tests/test_scaffolding.py::test_no_emojis_in_scaffolding PASSED          [100%]
++
++============================== 4 passed in 0.13s ==============================
++```
++
++`docker compose config` validation:
++Validated successfully with exit code 0.
++
++## Concerns or Observations
++None. All services, ports, and configuration specifications match the task brief and design specifications.
++Global rule check: Zero emojis across all created files and commit message.
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 756f58c..7caccfb 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -61,6 +61,7 @@ services:
+       - backend
+     volumes:
+       - ./frontend:/app
++      - /app/node_modules
+ 
+   prometheus:
+     image: prom/prometheus:v2.51.0
+diff --git a/tests/test_scaffolding.py b/tests/test_scaffolding.py
+index f25c0d8..74d589a 100644
+--- a/tests/test_scaffolding.py
++++ b/tests/test_scaffolding.py
+@@ -34,6 +34,9 @@ def test_docker_compose_structure():
+     assert has_port("prometheus", 9090), "prometheus service must expose port 9090"
+     assert has_port("grafana", 3001), "grafana service must expose port 3001"
+ 
++    frontend_volumes = services.get("frontend", {}).get("volumes", [])
++    assert "/app/node_modules" in frontend_volumes, "frontend service must mount /app/node_modules as anonymous volume to prevent host shadowing"
++
+ def test_scaffolding_files_exist():
+     required_files = [
+         "docker-compose.yml",

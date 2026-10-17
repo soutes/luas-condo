@@ -1,0 +1,535 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..09192e2
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,33 @@
++# Luas Condo Environment Configuration
++# Database
++POSTGRES_USER=postgres
++POSTGRES_PASSWORD=postgres
++POSTGRES_DB=luas_condo
++POSTGRES_HOST=db
++POSTGRES_PORT=5432
++DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/luas_condo
++
++# Application settings
++APP_ENV=development
++LOG_LEVEL=INFO
++SECRET_KEY=change-this-in-production-secret-key-32chars
++
++# Bitrix24 submission settings
++MOCK_SUBMISSION=true
++MOCK_BITRIX_URL=http://mock-bitrix:8080
++IBAGY_BITRIX_URL=https://ibagy.bitrix24.site/condominioressarcimento/ressarcimento/
++CONTRATO_PADRAO=09638.003.03
++
++# IMAP Email poller settings
++IMAP_SERVER=imap.gmail.com
++IMAP_PORT=993
++IMAP_USER=user@example.com
++IMAP_PASSWORD=app-specific-password
++IMAP_READ_ONLY=true
++
++# Telemetry and monitoring
++OTEL_SERVICE_NAME=luas_condo_backend
++OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
++PROMETHEUS_METRICS_PORT=8000
++GRAFANA_ADMIN_USER=admin
++GRAFANA_ADMIN_PASSWORD=admin
+diff --git a/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/progress.md b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/progress.md
+new file mode 100644
+index 0000000..f6ef40e
+--- /dev/null
++++ b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/progress.md
+@@ -0,0 +1,19 @@
++# SDD ledger — plan: docs/superpowers/plans/2026-10-16-condo-audit-reimbursement-plan.md
++
++Project: Luas Condo (Condo Audit & Reimbursement System)
++Workspace: C:\Users\luiz_\_DS\luas_projects\luas_condo
++Repo: https://github.com/soutes/luas-condo
++Initial commit: c95f533737ad38c9d4ad59c70d25231d40ffdd22
++
++## Pre-flight Conflict Scan
++| Task A | Task B | Produces vs Consumes | Status / Ruling |
++|---|---|---|---|
++| Task 1 (Scaffolding) | Task 2 (DB Models) | Directory layout & requirements.txt | Clean. Task 1 sets requirements and compose, Task 2 builds models. |
++| Task 2 (DB Models) | Task 3 (Parser) | ParsedCondoBill vs ItemRateio schemas | Clean. Pydantic schemas bridge parser and DB entities. |
++| Task 3 (Parser) | Task 4 (Audit) | ParsedCondoBill consumption | Clean. Audit engine takes ParsedCondoBill and partitions items. |
++| Task 4 (Audit) | Task 6 (Submitter) | AuditReport / SubmissionPayload | Clean. Submitter consumes formatted observations and amounts. |
++| Task 5 (IMAP) | Task 3 (Parser) | PDF byte stream to parser | Clean. Worker feeds attachment buffer to parser. |
++| Task 6 (Submitter) | Task 8 (On-Call) | Submitter failure triggers Alertmanager | Clean. Mock Bitrix simulates 500 / selector mismatch. |
++| Task 7 (Telemetry) | Task 8 (On-Call) | Unified trace_id in logs and alerts | Clean. Alert payload carries trace_id for agent correlation. |
++
++Ruling: All tasks agree with Global Constraints and course criteria. No emojis permitted anywhere.
+diff --git a/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-brief.md b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-brief.md
+new file mode 100644
+index 0000000..08ccb89
+--- /dev/null
++++ b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-brief.md
+@@ -0,0 +1,43 @@
++# Task 1 Brief: Project Scaffolding, Folder Structure & Docker Compose
++
++## Project Context
++Project: Luas Condo (Condo Audit & Reimbursement System)
++Workspace: C:\Users\luiz_\_DS\luas_projects\luas_condo
++Repo: https://github.com/soutes/luas-condo
++
++## Global Constraints
++- NO EMOJIS anywhere (code, comments, configs, commits, documentation). Use SVG/Lucide icons or plain text.
++- Single command execution: `docker compose up --build`.
++- Ports allocation:
++  - Frontend: 5173
++  - Backend API: 8000
++  - Mock Bitrix24: 8080
++  - PostgreSQL: 5432
++  - Prometheus: 9090
++  - Grafana: 3001
++
++## Task Scope & Files
++- Create: `docker-compose.yml`
++- Create: `.env.example`
++- Create: `backend/Dockerfile`
++- Create: `backend/requirements.txt`
++- Create: `backend/pyproject.toml`
++- Create: `frontend/Dockerfile`
++- Create: `frontend/package.json` (basic skeleton for container build)
++- Create: `mock_bitrix/Dockerfile`
++- Create: `mock_bitrix/requirements.txt`
++- Test: `tests/test_scaffolding.py`
++
++## Acceptance Criteria
++- [ ] `tests/test_scaffolding.py` checks that `docker-compose.yml` defines `db`, `backend`, `mock-bitrix`, `frontend`, `prometheus`, `grafana`.
++- [ ] Test runs with `pytest tests/test_scaffolding.py` and passes.
++- [ ] Minimal Dockerfiles and configuration files exist and are syntactically valid.
++- [ ] Commit message: `chore: scaffold repo structure and docker compose services` (NO EMOJIS).
++
++## Report Contract
++Write report to: `C:\Users\luiz_\_DS\luas_projects\luas_condo\.superpowers\sdd\2026-10-16-condo-audit-reimbursement-plan\task-1-report.md`
++Report must include:
++- Status: DONE | DONE_WITH_CONCERNS | BLOCKED
++- Commits created
++- Test execution output
++- Any concerns or observations
+diff --git a/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-report.md b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-report.md
+new file mode 100644
+index 0000000..a941e2b
+--- /dev/null
++++ b/.superpowers/sdd/2026-10-16-condo-audit-reimbursement-plan/task-1-report.md
+@@ -0,0 +1,44 @@
++# Task 1 Report: Scaffolding, Folder Structure & Docker Compose
++
++## Status
++DONE
++
++## Commits Created
++- `e57b1141573e26b459639f54c26a978229a3d73e`: `chore: scaffold repo structure and docker compose services`
++
++## Files Created
++- `docker-compose.yml`: Defines `db`, `backend`, `mock-bitrix`, `frontend`, `prometheus`, `grafana` with exact port allocations.
++- `.env.example`: Configuration template for database, bitrix submission, IMAP email poller, and telemetry.
++- `backend/Dockerfile`: Python 3.12-slim base with system dependencies, requirements install, and uvicorn command.
++- `backend/requirements.txt`: FastAPI, SQLAlchemy, Alembic, pdfplumber, Playwright, OpenTelemetry, Prometheus client, and pytest.
++- `backend/pyproject.toml`: Project metadata and pytest configuration.
++- `frontend/Dockerfile`: Node 20-alpine base with Vite development server setup.
++- `frontend/package.json`: Vite, React 18, Tailwind CSS, Lucide React, and Vitest setup.
++- `mock_bitrix/Dockerfile`: Python 3.12-slim base running mock Bitrix24 FastAPI server.
++- `mock_bitrix/requirements.txt`: Dependencies for FastAPI mock service.
++- `monitoring/prometheus.yml`: Prometheus scrape configuration targeting backend.
++- `tests/test_scaffolding.py`: Unit test verifying compose services, ports, required scaffolding files, and no-emoji rule.
++
++## Test Execution Output
++```
++============================= test session starts =============================
++platform win32 -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\luiz_\AppData\Local\Programs\Python\Python314\python.exe
++cachedir: .pytest_cache
++rootdir: C:\Users\luiz_\_DS\luas_projects\luas_condo
++plugins: anyio-4.13.0
++collecting ... collected 4 items
++
++tests/test_scaffolding.py::test_docker_compose_structure PASSED          [ 25%]
++tests/test_scaffolding.py::test_scaffolding_files_exist PASSED           [ 50%]
++tests/test_scaffolding.py::test_frontend_package_json_valid PASSED       [ 75%]
++tests/test_scaffolding.py::test_no_emojis_in_scaffolding PASSED          [100%]
++
++============================== 4 passed in 0.13s ==============================
++```
++
++`docker compose config` validation:
++Validated successfully with exit code 0.
++
++## Concerns or Observations
++None. All services, ports, and configuration specifications match the task brief and design specifications.
++Global rule check: Zero emojis across all created files and commit message.
+diff --git a/backend/Dockerfile b/backend/Dockerfile
+new file mode 100644
+index 0000000..839c8fe
+--- /dev/null
++++ b/backend/Dockerfile
+@@ -0,0 +1,17 @@
++FROM python:3.12-slim
++
++WORKDIR /app
++
++RUN apt-get update && apt-get install -y --no-install-recommends \
++    build-essential \
++    curl \
++    && rm -rf /var/lib/apt/lists/*
++
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++
++COPY . .
++
++EXPOSE 8000
++
++CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+diff --git a/backend/pyproject.toml b/backend/pyproject.toml
+new file mode 100644
+index 0000000..7397d44
+--- /dev/null
++++ b/backend/pyproject.toml
+@@ -0,0 +1,21 @@
++[project]
++name = "luas-condo-backend"
++version = "0.1.0"
++description = "Condo Audit & Reimbursement System Backend"
++readme = "README.md"
++requires-python = ">=3.12"
++dependencies = [
++    "fastapi>=0.110.0",
++    "uvicorn[standard]>=0.29.0",
++    "sqlalchemy>=2.0.29",
++    "pydantic>=2.7.0",
++    "pdfplumber>=0.11.0",
++    "playwright>=1.43.0",
++    "opentelemetry-api>=1.24.0",
++    "prometheus-client>=0.20.0"
++]
++
++[tool.pytest.ini_options]
++testpaths = ["tests"]
++python_files = ["test_*.py"]
++asyncio_mode = "auto"
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+new file mode 100644
+index 0000000..6743948
+--- /dev/null
++++ b/backend/requirements.txt
+@@ -0,0 +1,34 @@
++# Core Web Framework
++fastapi>=0.110.0
++uvicorn[standard]>=0.29.0
++python-multipart>=0.0.9
++pydantic>=2.7.0
++pydantic-settings>=2.2.1
++
++# Database and ORM
++sqlalchemy>=2.0.29
++psycopg2-binary>=2.9.9
++alembic>=1.13.1
++
++# Document Parsing & Processing
++pdfplumber>=0.11.0
++pypdf>=4.2.0
++
++# Browser Automation & Submission
++playwright>=1.43.0
++
++# Telemetry and Observability
++opentelemetry-api>=1.24.0
++opentelemetry-sdk>=1.24.0
++opentelemetry-instrumentation-fastapi>=0.45b0
++prometheus-client>=0.20.0
++
++# HTTP & Utilities
++httpx>=0.27.0
++requests>=2.31.0
++python-dotenv>=1.0.1
++pyyaml>=6.0.1
++
++# Testing
++pytest>=8.1.1
++pytest-asyncio>=0.23.6
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..756f58c
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,88 @@
++
++services:
++  db:
++    image: postgres:16-alpine
++    container_name: luas_condo_db
++    restart: unless-stopped
++    environment:
++      POSTGRES_USER: ${POSTGRES_USER:-postgres}
++      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
++      POSTGRES_DB: ${POSTGRES_DB:-luas_condo}
++    ports:
++      - "5432:5432"
++    volumes:
++      - pgdata:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-luas_condo}"]
++      interval: 5s
++      timeout: 5s
++      retries: 5
++
++  backend:
++    build:
++      context: ./backend
++      dockerfile: Dockerfile
++    container_name: luas_condo_backend
++    restart: unless-stopped
++    ports:
++      - "8000:8000"
++    environment:
++      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
++      MOCK_BITRIX_URL: http://mock-bitrix:8080
++      MOCK_SUBMISSION: ${MOCK_SUBMISSION:-true}
++    depends_on:
++      db:
++        condition: service_healthy
++    volumes:
++      - ./backend:/app
++
++  mock-bitrix:
++    build:
++      context: ./mock_bitrix
++      dockerfile: Dockerfile
++    container_name: luas_condo_mock_bitrix
++    restart: unless-stopped
++    ports:
++      - "8080:8080"
++    volumes:
++      - ./mock_bitrix:/app
++
++  frontend:
++    build:
++      context: ./frontend
++      dockerfile: Dockerfile
++    container_name: luas_condo_frontend
++    restart: unless-stopped
++    ports:
++      - "5173:5173"
++    environment:
++      VITE_API_URL: http://localhost:8000
++    depends_on:
++      - backend
++    volumes:
++      - ./frontend:/app
++
++  prometheus:
++    image: prom/prometheus:v2.51.0
++    container_name: luas_condo_prometheus
++    restart: unless-stopped
++    ports:
++      - "9090:9090"
++    volumes:
++      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
++
++  grafana:
++    image: grafana/grafana:10.4.1
++    container_name: luas_condo_grafana
++    restart: unless-stopped
++    ports:
++      - "3001:3000"
++    environment:
++      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
++      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
++      GF_USERS_ALLOW_SIGN_UP: "false"
++    depends_on:
++      - prometheus
++
++volumes:
++  pgdata:
+diff --git a/frontend/Dockerfile b/frontend/Dockerfile
+new file mode 100644
+index 0000000..59d5daf
+--- /dev/null
++++ b/frontend/Dockerfile
+@@ -0,0 +1,12 @@
++FROM node:20-alpine
++
++WORKDIR /app
++
++COPY package.json ./
++RUN npm install
++
++COPY . .
++
++EXPOSE 5173
++
++CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+diff --git a/frontend/package.json b/frontend/package.json
+new file mode 100644
+index 0000000..e0cfa60
+--- /dev/null
++++ b/frontend/package.json
+@@ -0,0 +1,29 @@
++{
++  "name": "luas-condo-frontend",
++  "private": true,
++  "version": "0.1.0",
++  "type": "module",
++  "scripts": {
++    "dev": "vite",
++    "build": "tsc && vite build",
++    "preview": "vite preview",
++    "test": "vitest"
++  },
++  "dependencies": {
++    "lucide-react": "^0.378.0",
++    "react": "^18.3.1",
++    "react-dom": "^18.3.1"
++  },
++  "devDependencies": {
++    "@testing-library/jest-dom": "^6.4.2",
++    "@testing-library/react": "^15.0.5",
++    "@types/react": "^18.3.3",
++    "@types/react-dom": "^18.3.0",
++    "@vitejs/plugin-react": "^4.2.1",
++    "jsdom": "^24.0.0",
++    "tailwindcss": "^3.4.3",
++    "typescript": "^5.4.5",
++    "vite": "^5.2.11",
++    "vitest": "^1.6.0"
++  }
++}
+diff --git a/mock_bitrix/Dockerfile b/mock_bitrix/Dockerfile
+new file mode 100644
+index 0000000..0a225e1
+--- /dev/null
++++ b/mock_bitrix/Dockerfile
+@@ -0,0 +1,12 @@
++FROM python:3.12-slim
++
++WORKDIR /app
++
++COPY requirements.txt .
++RUN pip install --no-cache-dir -r requirements.txt
++
++COPY . .
++
++EXPOSE 8080
++
++CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+diff --git a/mock_bitrix/requirements.txt b/mock_bitrix/requirements.txt
+new file mode 100644
+index 0000000..eeaa314
+--- /dev/null
++++ b/mock_bitrix/requirements.txt
+@@ -0,0 +1,4 @@
++fastapi>=0.110.0
++uvicorn[standard]>=0.29.0
++python-multipart>=0.0.9
++pydantic>=2.7.0
+diff --git a/monitoring/prometheus.yml b/monitoring/prometheus.yml
+new file mode 100644
+index 0000000..474ccf5
+--- /dev/null
++++ b/monitoring/prometheus.yml
+@@ -0,0 +1,8 @@
++global:
++  scrape_interval: 15s
++  evaluation_interval: 15s
++
++scrape_configs:
++  - job_name: "backend"
++    static_configs:
++      - targets: ["backend:8000"]
+diff --git a/tests/test_scaffolding.py b/tests/test_scaffolding.py
+new file mode 100644
+index 0000000..f25c0d8
+--- /dev/null
++++ b/tests/test_scaffolding.py
+@@ -0,0 +1,87 @@
++import json
++import os
++import re
++import yaml
++
++ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
++
++def test_docker_compose_structure():
++    compose_path = os.path.join(ROOT_DIR, "docker-compose.yml")
++    assert os.path.exists(compose_path), "docker-compose.yml must exist"
++    with open(compose_path, "r", encoding="utf-8") as f:
++        data = yaml.safe_load(f)
++    services = data.get("services", {})
++    expected_services = ["db", "backend", "mock-bitrix", "frontend", "prometheus", "grafana"]
++    for svc in expected_services:
++        assert svc in services, f"Service '{svc}' must be defined in docker-compose.yml"
++
++    # Verify expected port exposures
++    ports_map = {}
++    for name, svc in services.items():
++        raw_ports = svc.get("ports", [])
++        ports_map[name] = [str(p) for p in raw_ports]
++
++    def has_port(svc_name, host_port):
++        for p in ports_map.get(svc_name, []):
++            if str(host_port) in p:
++                return True
++        return False
++
++    assert has_port("db", 5432), "db service must expose port 5432"
++    assert has_port("backend", 8000), "backend service must expose port 8000"
++    assert has_port("mock-bitrix", 8080), "mock-bitrix service must expose port 8080"
++    assert has_port("frontend", 5173), "frontend service must expose port 5173"
++    assert has_port("prometheus", 9090), "prometheus service must expose port 9090"
++    assert has_port("grafana", 3001), "grafana service must expose port 3001"
++
++def test_scaffolding_files_exist():
++    required_files = [
++        "docker-compose.yml",
++        ".env.example",
++        "backend/Dockerfile",
++        "backend/requirements.txt",
++        "backend/pyproject.toml",
++        "frontend/Dockerfile",
++        "frontend/package.json",
++        "mock_bitrix/Dockerfile",
++        "mock_bitrix/requirements.txt",
++    ]
++    for rel_path in required_files:
++        full_path = os.path.join(ROOT_DIR, rel_path)
++        assert os.path.exists(full_path), f"File {rel_path} must exist"
++        assert os.path.getsize(full_path) > 0, f"File {rel_path} must not be empty"
++
++def test_frontend_package_json_valid():
++    pkg_path = os.path.join(ROOT_DIR, "frontend", "package.json")
++    if os.path.exists(pkg_path):
++        with open(pkg_path, "r", encoding="utf-8") as f:
++            data = json.load(f)
++        assert "name" in data
++        assert "scripts" in data
++
++def test_no_emojis_in_scaffolding():
++    # Simple regex to catch standard emoji unicode ranges
++    emoji_pattern = re.compile(
++        "[\U0001F600-\U0001F64F"
++        "\U0001F300-\U0001F5FF"
++        "\U0001F680-\U0001F6FF"
++        "\U0001F1E0-\U0001F1FF"
++        "\U00002702-\U000027B0"
++        "\U000024C2-\U0001F251"
++        "\U0001F900-\U0001F9FF"
++        "\U0001FA00-\U0001FA6F"
++        "\U0001FA70-\U0001FAFF]+",
++        flags=re.UNICODE
++    )
++    for root, _, files in os.walk(ROOT_DIR):
++        if ".git" in root or ".venv" in root or "node_modules" in root:
++            continue
++        for f in files:
++            path = os.path.join(root, f)
++            try:
++                with open(path, "r", encoding="utf-8") as fp:
++                    content = fp.read()
++                    match = emoji_pattern.search(content)
++                    assert match is None, f"Emoji detected in file {path}: {match.group(0)}"
++            except UnicodeDecodeError:
++                pass

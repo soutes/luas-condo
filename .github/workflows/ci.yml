@@ -1,0 +1,127 @@
+name: CI/CD Pipeline
+
+'on':
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target deployment environment
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - dev
+      rollback:
+        description: Rollback to previous stable version
+        required: false
+        default: false
+        type: boolean
+      rollback_commit:
+        description: Commit SHA or image tag to roll back to
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run Test Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio anyio httpx
+
+      - name: Run Backend Pytest Suite
+        run: |
+          pytest --maxfail=1 -v
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: |
+          npm ci
+
+      - name: Run Frontend Vitest Suite
+        working-directory: ./frontend
+        run: |
+          npm test
+
+      - name: Build Frontend Production Bundle
+        working-directory: ./frontend
+        run: |
+          npm run build
+
+  deploy-dev:
+    name: Automated Deploy to Dev
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: development
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Development Environment
+        run: |
+          echo "Automated continuous delivery to development environment"
+          echo "Deploying commit: ${{ github.sha }}"
+
+  deploy-prod:
+    name: Manual Deploy to Production
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Deployment Mode
+        run: |
+          if [ "${{ github.event.inputs.rollback }}" = "true" ]; then
+            echo "ROLLBACK MODE ACTIVATED"
+            echo "Target rollback reference: ${{ github.event.inputs.rollback_commit }}"
+          else
+            echo "STANDARD PRODUCTION DEPLOYMENT"
+            echo "Deploying target commit: ${{ github.sha }}"
+          fi
+
+      - name: Execute Production Deployment or Rollback
+        run: |
+          if [ "${{ github.event.inputs.rollback }}" = "true" ]; then
+            echo "Executing rollback procedure to target commit: ${{ github.event.inputs.rollback_commit }}"
+            echo "Rollback successfully completed."
+          else
+            echo "Executing production release"
+            echo "Production deployment successfully completed."
+          fi

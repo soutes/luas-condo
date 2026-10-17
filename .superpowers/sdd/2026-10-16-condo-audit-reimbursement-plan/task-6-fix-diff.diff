@@ -1,0 +1,169 @@
+diff --git a/backend/app/services/bitrix_submitter.py b/backend/app/services/bitrix_submitter.py
+index d011549..3d2006e 100644
+--- a/backend/app/services/bitrix_submitter.py
++++ b/backend/app/services/bitrix_submitter.py
+@@ -102,10 +102,10 @@ def resolve_target_url(target_url: Optional[str] = None) -> str:
+         return target_url
+     is_mock = os.getenv("MOCK_SUBMISSION", "true").lower() in ("true", "1", "yes")
+     if is_mock:
+-        base = os.getenv("MOCK_BITRIX_URL", "http://localhost:8080")
+-        if not base.endswith("/condominioressarcimento/ressarcimento/") and not base.endswith("/"):
++        base = os.getenv("MOCK_BITRIX_URL", "http://localhost:8080").rstrip("/")
++        if not base.endswith("/condominioressarcimento/ressarcimento"):
+             return f"{base}/condominioressarcimento/ressarcimento/"
+-        return base
++        return f"{base}/"
+     return os.getenv(
+         "IBAGY_BITRIX_URL",
+         "https://ibagy.bitrix24.site/condominioressarcimento/ressarcimento/",
+@@ -250,24 +250,47 @@ async def _submit_via_browser(
+     os.makedirs(screen_dir, exist_ok=True)
+     screenshot_path = os.path.join(screen_dir, f"submissao_{trace_id}.png")
+ 
+-    # Prepare temp files on disk for Playwright set_input_files if needed
++    # Validate and prepare files; fail fast if files are missing or unreadable
++    try:
++        boleto_name, boleto_data = _prepare_file_content(
++            payload.boleto_path,
++            payload.boleto_bytes,
++            payload.boleto_filename or "boleto.pdf",
++        )
++        comp_name, comp_data = _prepare_file_content(
++            payload.comprovante_path,
++            payload.comprovante_bytes,
++            payload.comprovante_filename or "comprovante.pdf",
++        )
++    except Exception as exc:
++        return SubmissionReceipt(
++            status=StatusSubmissao.ERRO,
++            protocolo=None,
++            mensagem=f"Erro ao preparar arquivos para submissao: {str(exc)}",
++            screenshot_path=None,
++            trace_id=trace_id,
++        )
++
++    # Prepare temp files on disk for Playwright set_input_files if bytes were supplied
+     temp_dir_obj = None
+     try:
+-        boleto_file = payload.boleto_path
+-        if not boleto_file or not os.path.exists(boleto_file):
++        if payload.boleto_path and os.path.exists(payload.boleto_path):
++            boleto_file = payload.boleto_path
++        else:
+             if temp_dir_obj is None:
+                 temp_dir_obj = tempfile.TemporaryDirectory()
+-            boleto_file = os.path.join(temp_dir_obj.name, payload.boleto_filename or "boleto.pdf")
++            boleto_file = os.path.join(temp_dir_obj.name, boleto_name)
+             with open(boleto_file, "wb") as f:
+-                f.write(payload.boleto_bytes or b"")
++                f.write(boleto_data)
+ 
+-        comp_file = payload.comprovante_path
+-        if not comp_file or not os.path.exists(comp_file):
++        if payload.comprovante_path and os.path.exists(payload.comprovante_path):
++            comp_file = payload.comprovante_path
++        else:
+             if temp_dir_obj is None:
+                 temp_dir_obj = tempfile.TemporaryDirectory()
+-            comp_file = os.path.join(temp_dir_obj.name, payload.comprovante_filename or "comprovante.pdf")
++            comp_file = os.path.join(temp_dir_obj.name, comp_name)
+             with open(comp_file, "wb") as f:
+-                f.write(payload.comprovante_bytes or b"")
++                f.write(comp_data)
+ 
+         async with async_playwright() as p:
+             browser = await p.chromium.launch(headless=True)
+diff --git a/backend/pyproject.toml b/backend/pyproject.toml
+index 7397d44..156ae8d 100644
+--- a/backend/pyproject.toml
++++ b/backend/pyproject.toml
+@@ -18,4 +18,6 @@ dependencies = [
+ [tool.pytest.ini_options]
+ testpaths = ["tests"]
+ python_files = ["test_*.py"]
+-asyncio_mode = "auto"
++filterwarnings = [
++    "ignore::DeprecationWarning:websockets.*:",
++]
+diff --git a/backend/tests/test_bitrix_submitter.py b/backend/tests/test_bitrix_submitter.py
+index 14793e1..28ab2f7 100644
+--- a/backend/tests/test_bitrix_submitter.py
++++ b/backend/tests/test_bitrix_submitter.py
+@@ -43,6 +43,7 @@ from app.models.entities import (
+ from app.services.bitrix_submitter import (
+     SubmissionPayload,
+     SubmissionReceipt,
++    resolve_target_url,
+     submit_reimbursement,
+ )
+ from mock_bitrix.main import app as mock_bitrix_app
+@@ -437,3 +438,69 @@ def test_submit_reimbursement_browser_detects_altered_selector(
+         assert "contrato" in receipt.mensagem.lower()
+ 
+     asyncio.run(run())
++
++
++def test_submit_reimbursement_browser_fails_fast_on_missing_file(db_session: Session):
++    """Playwright submission fails fast with ERRO when local file path does not exist."""
++    async def run():
++        payload = SubmissionPayload(
++            nome="Luiz Soutes",
++            email="luiz@example.com",
++            telefone="55 48 99999-9999",
++            contrato="09638.003.03",
++            boleto_path="/nonexistent/path/to/missing_boleto.pdf",
++            comprovante_bytes=b"%PDF-1.4 dummy",
++        )
++
++        receipt = await submit_reimbursement(
++            payload=payload,
++            db_session=db_session,
++            target_url="http://localhost:8080/condominioressarcimento/ressarcimento/",
++            use_browser=True,
++        )
++
++        assert receipt.status == StatusSubmissao.ERRO
++        assert receipt.protocolo is None
++        assert "arquivo nao encontrado" in receipt.mensagem.lower()
++        assert receipt.screenshot_path is None
++
++    asyncio.run(run())
++
++
++def test_submit_reimbursement_http_fails_fast_on_missing_file(db_session: Session):
++    """HTTP submission fails fast with ERRO when local file path does not exist."""
++    async def run():
++        payload = SubmissionPayload(
++            nome="Luiz Soutes",
++            email="luiz@example.com",
++            telefone="55 48 99999-9999",
++            contrato="09638.003.03",
++            boleto_path="/nonexistent/path/to/missing_boleto.pdf",
++            comprovante_bytes=b"%PDF-1.4 dummy",
++        )
++
++        receipt = await submit_reimbursement(
++            payload=payload,
++            db_session=db_session,
++            target_url="http://testserver/condominioressarcimento/ressarcimento/",
++            use_browser=False,
++        )
++
++        assert receipt.status == StatusSubmissao.ERRO
++        assert receipt.protocolo is None
++        assert "arquivo nao encontrado" in receipt.mensagem.lower()
++
++    asyncio.run(run())
++
++
++def test_resolve_target_url_normalizes_trailing_slashes(monkeypatch):
++    """resolve_target_url correctly appends endpoint path even when base URL has trailing slash."""
++    monkeypatch.setenv("MOCK_SUBMISSION", "true")
++    monkeypatch.setenv("MOCK_BITRIX_URL", "http://mock-bitrix:8080/")
++    url = resolve_target_url()
++    assert url == "http://mock-bitrix:8080/condominioressarcimento/ressarcimento/"
++
++    monkeypatch.setenv("MOCK_BITRIX_URL", "http://mock-bitrix:8080")
++    url2 = resolve_target_url()
++    assert url2 == "http://mock-bitrix:8080/condominioressarcimento/ressarcimento/"
++

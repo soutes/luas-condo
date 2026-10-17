@@ -1,0 +1,592 @@
+diff --git a/backend/app/core/__init__.py b/backend/app/core/__init__.py
+index 223744a..5183cb1 100644
+--- a/backend/app/core/__init__.py
++++ b/backend/app/core/__init__.py
+@@ -1,7 +1,38 @@
+ """
+-Core application configuration and database session management.
++Core application configuration, database session management, and telemetry.
++No emojis used.
+ """
+ 
+ from app.core.database import Base, SessionLocal, engine, get_db, init_db
++from app.core.telemetry import (
++    condo_cycle_sla_days_remaining,
++    condo_processing_duration_seconds,
++    condo_reimbursement_amount_brl,
++    condo_submissions_total,
++    get_current_trace_id,
++    get_or_create_trace_id,
++    get_prometheus_metrics,
++    get_tracer,
++    sanitize_log_data,
++    sanitize_text,
++    trace_step,
++)
+ 
+-__all__ = ["Base", "SessionLocal", "engine", "get_db", "init_db"]
++__all__ = [
++    "Base",
++    "SessionLocal",
++    "condo_cycle_sla_days_remaining",
++    "condo_processing_duration_seconds",
++    "condo_reimbursement_amount_brl",
++    "condo_submissions_total",
++    "engine",
++    "get_current_trace_id",
++    "get_db",
++    "get_or_create_trace_id",
++    "get_prometheus_metrics",
++    "get_tracer",
++    "init_db",
++    "sanitize_log_data",
++    "sanitize_text",
++    "trace_step",
++]
+diff --git a/backend/app/core/telemetry.py b/backend/app/core/telemetry.py
+new file mode 100644
+index 0000000..6562241
+--- /dev/null
++++ b/backend/app/core/telemetry.py
+@@ -0,0 +1,209 @@
++"""
++OpenTelemetry Instrumentation, Correlated Tracing, and LGPD Sanitization.
++No emojis used.
++"""
++
++from contextlib import contextmanager
++import re
++from typing import Any, Optional
++import uuid
++
++from opentelemetry import trace
++from opentelemetry.trace import StatusCode, Tracer
++from opentelemetry.sdk.trace import TracerProvider
++from opentelemetry.sdk.resources import Resource
++from prometheus_client import (
++    CONTENT_TYPE_LATEST,
++    REGISTRY,
++    Counter,
++    Gauge,
++    Histogram,
++    generate_latest,
++)
++
++
++# Global tracer cache
++_GLOBAL_TRACER: Optional[Tracer] = None
++
++# Regex patterns for LGPD and secret redaction
++CPF_REGEX = re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b")
++SENSITIVE_KEY_VALUE_REGEX = re.compile(
++    r"(?i)\b(password|email_pass|secret|token|chave_pix)\b\s*([:=]\s*)([\"']?)([^\s\"',;]+)\3"
++)
++BEARER_TOKEN_REGEX = re.compile(r"(?i)\b(bearer\s+)([a-zA-Z0-9_\-\.]+)")
++
++SENSITIVE_FIELD_NAMES = ("password", "email_pass", "secret", "token", "chave_pix")
++
++
++def get_tracer(service_name: str = "luas-condo", provider: Optional[TracerProvider] = None) -> Tracer:
++    """
++    Return configured OpenTelemetry Tracer.
++    Initializes a TracerProvider if not already configured.
++    """
++    global _GLOBAL_TRACER
++    if provider is not None:
++        return provider.get_tracer(service_name)
++
++    current_provider = trace.get_tracer_provider()
++    if not isinstance(current_provider, TracerProvider):
++        new_provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
++        trace.set_tracer_provider(new_provider)
++
++    _GLOBAL_TRACER = trace.get_tracer(service_name)
++    return _GLOBAL_TRACER
++
++
++def get_current_trace_id() -> str:
++    """
++    Return active trace ID as a 32-character hex string or generate a new valid 32-character hex ID.
++    """
++    try:
++        span = trace.get_current_span()
++        span_ctx = span.get_span_context()
++        if span_ctx is not None and span_ctx.is_valid and span_ctx.trace_id != 0:
++            return f"{span_ctx.trace_id:032x}"
++    except Exception:
++        pass
++    return uuid.uuid4().hex
++
++
++def get_or_create_trace_id(trace_id: Optional[str] = None) -> str:
++    """
++    Return provided trace ID or resolve active/generated trace ID.
++    """
++    if trace_id:
++        return trace_id
++    return get_current_trace_id()
++
++
++def sanitize_text(text: str) -> str:
++    """
++    Scrubs inline CPFs and sensitive tokens from a text string.
++    """
++    if not isinstance(text, str):
++        return text
++
++    sanitized = CPF_REGEX.sub("[REDACTED_CPF]", text)
++    sanitized = SENSITIVE_KEY_VALUE_REGEX.sub(r"\1\2\3[REDACTED_SECRET]\3", sanitized)
++    sanitized = BEARER_TOKEN_REGEX.sub(r"\1[REDACTED_SECRET]", sanitized)
++    return sanitized
++
++
++def sanitize_log_data(data: Any) -> Any:
++    """
++    Recursively sanitize dictionaries, lists, and strings to eliminate PII and credentials.
++    """
++    if isinstance(data, dict):
++        cleaned: dict[str, Any] = {}
++        for key, val in data.items():
++            k_lower = str(key).lower()
++            if any(term in k_lower for term in SENSITIVE_FIELD_NAMES):
++                cleaned[key] = "[REDACTED_SECRET]"
++            elif k_lower == "cpf" or "cpf" in k_lower:
++                cleaned[key] = "[REDACTED_CPF]"
++            else:
++                cleaned[key] = sanitize_log_data(val)
++        return cleaned
++    elif isinstance(data, list):
++        return [sanitize_log_data(item) for item in data]
++    elif isinstance(data, tuple):
++        return tuple(sanitize_log_data(item) for item in data)
++    elif isinstance(data, str):
++        return sanitize_text(data)
++    else:
++        return data
++
++
++@contextmanager
++def trace_step(
++    name: str,
++    attributes: Optional[dict[str, Any]] = None,
++    tracer_provider: Optional[TracerProvider] = None,
++):
++    """
++    Context manager creating OpenTelemetry spans, recording errors, and propagating trace_id.
++    Zero PII guarantee: attributes are sanitized before setting on span.
++    """
++    tracer = get_tracer(provider=tracer_provider)
++    sanitized_attrs = sanitize_log_data(attributes) if attributes else {}
++
++    with tracer.start_as_current_span(name) as span:
++        trace_id = get_current_trace_id()
++        span.set_attribute("trace_id", trace_id)
++
++        for key, val in sanitized_attrs.items():
++            if val is not None:
++                if isinstance(val, (bool, str, bytes, int, float)):
++                    span.set_attribute(str(key), val)
++                else:
++                    span.set_attribute(str(key), str(val))
++
++        try:
++            yield span
++        except Exception as exc:
++            span.record_exception(exc)
++            span.set_status(StatusCode.ERROR, str(exc))
++            raise
++
++
++# Prometheus Metric Registrations
++def _get_or_create_counter(name: str, documentation: str, labelnames=(), registry=REGISTRY) -> Counter:
++    if name in registry._names_to_collectors:
++        collector = registry._names_to_collectors[name]
++        if isinstance(collector, Counter):
++            return collector
++    return Counter(name, documentation, labelnames, registry=registry)
++
++
++def _get_or_create_histogram(
++    name: str,
++    documentation: str,
++    labelnames=(),
++    buckets=Histogram.DEFAULT_BUCKETS,
++    registry=REGISTRY,
++) -> Histogram:
++    if name in registry._names_to_collectors:
++        collector = registry._names_to_collectors[name]
++        if isinstance(collector, Histogram):
++            return collector
++    return Histogram(name, documentation, labelnames, buckets=buckets, registry=registry)
++
++
++def _get_or_create_gauge(name: str, documentation: str, labelnames=(), registry=REGISTRY) -> Gauge:
++    if name in registry._names_to_collectors:
++        collector = registry._names_to_collectors[name]
++        if isinstance(collector, Gauge):
++            return collector
++    return Gauge(name, documentation, labelnames, registry=registry)
++
++
++condo_submissions_total = _get_or_create_counter(
++    "condo_submissions_total",
++    "Total count of reimbursement submissions by status and target",
++    labelnames=["status", "target"],
++)
++
++condo_reimbursement_amount_brl = _get_or_create_histogram(
++    "condo_reimbursement_amount_brl",
++    "Histogram of condo reimbursement amounts in BRL",
++    buckets=(10.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, float("inf")),
++)
++
++condo_processing_duration_seconds = _get_or_create_histogram(
++    "condo_processing_duration_seconds",
++    "Histogram of condo processing duration in seconds",
++    buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, float("inf")),
++)
++
++condo_cycle_sla_days_remaining = _get_or_create_gauge(
++    "condo_cycle_sla_days_remaining",
++    "Gauge of days remaining before cycle SLA deadline",
++)
++
++
++def get_prometheus_metrics() -> str:
++    """
++    Return Prometheus exposition format metrics string.
++    """
++    data = generate_latest(REGISTRY)
++    return data.decode("utf-8") if isinstance(data, bytes) else str(data)
+diff --git a/backend/app/main.py b/backend/app/main.py
+new file mode 100644
+index 0000000..91cb598
+--- /dev/null
++++ b/backend/app/main.py
+@@ -0,0 +1,83 @@
++"""
++Main FastAPI Application Entrypoint.
++Exposes endpoints for health checks, Prometheus metrics, and OpenTelemetry instrumentation.
++No emojis used.
++"""
++
++from fastapi import FastAPI, Request, Response
++from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
++
++from app.core.telemetry import (
++    get_current_trace_id,
++    get_prometheus_metrics,
++    trace_step,
++)
++
++app = FastAPI(
++    title="Luas Condo Service",
++    description="Condo Audit and Reimbursement Backend Automation Service",
++    version="1.0.0",
++)
++
++# OpenTelemetry FastAPI automatic instrumentation
++FastAPIInstrumentor.instrument_app(app)
++
++
++@app.middleware("http")
++async def trace_correlation_middleware(request: Request, call_next):
++    """
++    HTTP middleware extracting or propagating trace correlation header x-trace-id.
++    """
++    incoming_trace_id = request.headers.get("x-trace-id")
++    attributes = {
++        "http.method": request.method,
++        "http.path": request.url.path,
++    }
++    if incoming_trace_id:
++        attributes["inbound_trace_id"] = incoming_trace_id
++
++    with trace_step(f"{request.method} {request.url.path}", attributes=attributes):
++        active_trace_id = incoming_trace_id if incoming_trace_id else get_current_trace_id()
++        response: Response = await call_next(request)
++        response.headers["x-trace-id"] = active_trace_id
++        return response
++
++
++@app.get("/api/health")
++async def health_check(request: Request):
++    """
++    Service health check endpoint returning status and correlated trace ID.
++    """
++    trace_id = request.headers.get("x-trace-id") or get_current_trace_id()
++    return {
++        "status": "ok",
++        "service": "luas-condo",
++        "trace_id": trace_id,
++    }
++
++
++@app.get("/metrics")
++async def metrics_endpoint():
++    """
++    Prometheus scraping endpoint exposing operational metrics.
++    """
++    return Response(
++        content=get_prometheus_metrics(),
++        media_type="text/plain; version=0.0.4; charset=utf-8",
++    )
++
++
++@app.get("/")
++async def root():
++    """
++    Root informative endpoint.
++    """
++    return {
++        "service": "luas-condo",
++        "status": "running",
++        "endpoints": {
++            "health": "/api/health",
++            "metrics": "/metrics",
++            "docs": "/docs",
++        },
++    }
+diff --git a/backend/tests/test_telemetry.py b/backend/tests/test_telemetry.py
+new file mode 100644
+index 0000000..1292677
+--- /dev/null
++++ b/backend/tests/test_telemetry.py
+@@ -0,0 +1,237 @@
++"""
++Tests for OpenTelemetry Instrumentation, Correlated Tracing, and LGPD Sanitization.
++No emojis used.
++"""
++
++import os
++import re
++import sys
++from pathlib import Path
++import pytest
++from opentelemetry.trace import StatusCode
++from opentelemetry.sdk.trace import TracerProvider
++from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
++from opentelemetry.sdk.trace.export import SimpleSpanProcessor
++from starlette.testclient import TestClient
++
++backend_dir = Path(__file__).resolve().parent.parent
++if str(backend_dir) not in sys.path:
++    sys.path.insert(0, str(backend_dir))
++
++from app.core.telemetry import (
++    get_tracer,
++    get_current_trace_id,
++    trace_step,
++    sanitize_text,
++    sanitize_log_data,
++    get_prometheus_metrics,
++    condo_submissions_total,
++    condo_reimbursement_amount_brl,
++    condo_processing_duration_seconds,
++    condo_cycle_sla_days_remaining,
++)
++from app.main import app
++
++
++HEX_TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
++
++
++@pytest.fixture(autouse=True)
++def setup_span_exporter():
++    """Configure an in-memory span exporter for testing trace captures."""
++    exporter = InMemorySpanExporter()
++    tracer_provider = TracerProvider()
++    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
++    tracer = get_tracer("test-telemetry", provider=tracer_provider)
++    yield exporter, tracer_provider
++    exporter.clear()
++
++
++def test_get_tracer():
++    tracer = get_tracer("test-tracer")
++    assert tracer is not None
++
++
++def test_get_current_trace_id_format():
++    # Outside active span, should generate a 32-char hex trace ID
++    trace_id = get_current_trace_id()
++    assert len(trace_id) == 32
++    assert HEX_TRACE_ID_PATTERN.match(trace_id) is not None
++
++
++def test_trace_step_creates_span_and_propagates_trace_id(setup_span_exporter):
++    exporter, provider = setup_span_exporter
++
++    with trace_step("test_step_root", attributes={"step": "ingestion"}, tracer_provider=provider) as root_span:
++        root_trace_id = get_current_trace_id()
++        assert len(root_trace_id) == 32
++        assert HEX_TRACE_ID_PATTERN.match(root_trace_id) is not None
++
++        # Nested span must propagate identical trace_id
++        with trace_step("test_step_child", attributes={"step": "parsing"}, tracer_provider=provider) as child_span:
++            child_trace_id = get_current_trace_id()
++            assert child_trace_id == root_trace_id
++
++    spans = exporter.get_finished_spans()
++    assert len(spans) == 2
++    names = [s.name for s in spans]
++    assert "test_step_child" in names
++    assert "test_step_root" in names
++
++    # Verify both spans share the same trace ID
++    trace_ids = {f"{s.context.trace_id:032x}" for s in spans}
++    assert len(trace_ids) == 1
++    assert root_trace_id in trace_ids
++
++
++def test_trace_step_records_exception_and_error_status(setup_span_exporter):
++    exporter, provider = setup_span_exporter
++
++    with pytest.raises(ValueError, match="Simulated parsing failure"):
++        with trace_step("faulty_step", tracer_provider=provider):
++            raise ValueError("Simulated parsing failure")
++
++    spans = exporter.get_finished_spans()
++    assert len(spans) == 1
++    failed_span = spans[0]
++    assert failed_span.status.status_code == StatusCode.ERROR
++    assert "Simulated parsing failure" in failed_span.status.description
++
++    # Verify exception event recorded
++    events = [e.name for e in failed_span.events]
++    assert "exception" in events
++
++
++def test_trace_step_sanitizes_pii_attributes(setup_span_exporter):
++    exporter, provider = setup_span_exporter
++
++    attributes = {
++        "tenant_cpf": "123.456.789-01",
++        "user_password": "supersecretpassword123",
++        "api_token": "token-xyz-abc",
++        "valid_key": "ordinary_value",
++    }
++
++    with trace_step("sanitized_step", attributes=attributes, tracer_provider=provider) as span:
++        pass
++
++    spans = exporter.get_finished_spans()
++    assert len(spans) == 1
++    span_attrs = spans[0].attributes
++
++    # Sensitive values must be redacted in span attributes
++    assert span_attrs.get("tenant_cpf") == "[REDACTED_CPF]"
++    assert span_attrs.get("user_password") == "[REDACTED_SECRET]"
++    assert span_attrs.get("api_token") == "[REDACTED_SECRET]"
++    assert span_attrs.get("valid_key") == "ordinary_value"
++
++
++def test_sanitize_text():
++    # Test CPF redaction
++    raw_cpf_text = "Processando boleto do CPF 123.456.789-00 referente a taxa de condominio."
++    sanitized_cpf = sanitize_text(raw_cpf_text)
++    assert "123.456.789-00" not in sanitized_cpf
++    assert "[REDACTED_CPF]" in sanitized_cpf
++
++    # Test sensitive key-value pairs redaction
++    raw_secret_text = "Autenticando email com password=minhasenha123 e email_pass: pass456"
++    sanitized_secret = sanitize_text(raw_secret_text)
++    assert "minhasenha123" not in sanitized_secret
++    assert "pass456" not in sanitized_secret
++    assert "[REDACTED_SECRET]" in sanitized_secret
++
++    # Test Bearer token, chave_pix, and CPF together in text
++    raw_pix_bearer = "Chave PIX chave_pix=minhachavepix para locatario CPF 123.456.789-00 com Bearer eyJhbGciOiJIUz"
++    sanitized_pix_bearer = sanitize_text(raw_pix_bearer)
++    assert "minhachavepix" not in sanitized_pix_bearer
++    assert "eyJhbGciOiJIUz" not in sanitized_pix_bearer
++    assert "123.456.789-00" not in sanitized_pix_bearer
++    assert "[REDACTED_SECRET]" in sanitized_pix_bearer
++    assert "[REDACTED_CPF]" in sanitized_pix_bearer
++
++
++def test_sanitize_log_data():
++    raw_data = {
++        "condominio": "Residencial Solar dos Ventos",
++        "cpf": "999.888.777-66",
++        "password": "unmasked_secret_password",
++        "auth": {
++            "email_pass": "smtp_secret_pass",
++            "token": "bearer-token-123",
++            "secret": "top-secret-val",
++            "chave_pix": "pix-key-999",
++        },
++        "items": [
++            {"description": "Taxa ordinaria", "amount": 500.0},
++            {"description": "Boleto CPF 111.222.333-44", "amount": 25.0},
++        ],
++    }
++
++    sanitized = sanitize_log_data(raw_data)
++
++    assert sanitized["condominio"] == "Residencial Solar dos Ventos"
++    assert sanitized["cpf"] == "[REDACTED_CPF]"
++    assert sanitized["password"] == "[REDACTED_SECRET]"
++    assert sanitized["auth"]["email_pass"] == "[REDACTED_SECRET]"
++    assert sanitized["auth"]["token"] == "[REDACTED_SECRET]"
++    assert sanitized["auth"]["secret"] == "[REDACTED_SECRET]"
++    assert sanitized["auth"]["chave_pix"] == "[REDACTED_SECRET]"
++
++    # Verify list items
++    assert sanitized["items"][0]["description"] == "Taxa ordinaria"
++    assert "111.222.333-44" not in sanitized["items"][1]["description"]
++    assert "[REDACTED_CPF]" in sanitized["items"][1]["description"]
++
++
++def test_prometheus_metrics_collection_and_exposition():
++    # Increment counter
++    condo_submissions_total.labels(status="SUCESSO", target="mock-bitrix").inc()
++    condo_submissions_total.labels(status="ERRO", target="mock-bitrix").inc(2)
++
++    # Observe histograms
++    condo_reimbursement_amount_brl.observe(389.50)
++    condo_processing_duration_seconds.observe(4.75)
++
++    # Set gauge
++    condo_cycle_sla_days_remaining.set(6)
++
++    metrics_text = get_prometheus_metrics()
++    assert isinstance(metrics_text, str)
++    assert "condo_submissions_total" in metrics_text
++    assert 'status="SUCESSO"' in metrics_text
++    assert 'target="mock-bitrix"' in metrics_text
++    assert "condo_reimbursement_amount_brl" in metrics_text
++    assert "condo_processing_duration_seconds" in metrics_text
++    assert "condo_cycle_sla_days_remaining" in metrics_text
++
++
++def test_fastapi_health_endpoint():
++    client = TestClient(app)
++    response = client.get("/api/health")
++
++    assert response.status_code == 200
++    data = response.json()
++    assert data.get("status") == "ok"
++    assert data.get("service") == "luas-condo"
++    assert "trace_id" in data
++    assert HEX_TRACE_ID_PATTERN.match(data["trace_id"]) is not None
++    assert "x-trace-id" in response.headers
++
++
++def test_fastapi_metrics_endpoint():
++    client = TestClient(app)
++    response = client.get("/metrics")
++
++    assert response.status_code == 200
++    assert "text/plain" in response.headers.get("content-type", "")
++    assert "condo_submissions_total" in response.text
++
++
++def test_fastapi_trace_id_header_propagation():
++    client = TestClient(app)
++    custom_trace_id = "0123456789abcdef0123456789abcdef"
++    response = client.get("/api/health", headers={"x-trace-id": custom_trace_id})
++
++    assert response.status_code == 200
++    assert response.headers.get("x-trace-id") == custom_trace_id
++    assert response.json().get("trace_id") == custom_trace_id
