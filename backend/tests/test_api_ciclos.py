@@ -245,3 +245,89 @@ def test_submeter_ciclo_not_found(client: TestClient):
     random_id = uuid.uuid4()
     response = client.post(f"/api/ciclos/{random_id}/submeter", json={})
     assert response.status_code == 404
+
+
+def test_get_monthly_checklist(client: TestClient, db_session: Session):
+    """GET /api/ciclos/checklist/mensal returns structured checklist with document statuses."""
+    ciclo = CicloCondominio(
+        competencia="2026-09",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 10, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ressarcimento=Decimal("354.50"),
+        valor_desconto_aluguel=Decimal("264.50"),
+        valor_saldo_residual=Decimal("90.00"),
+        boleto_pdf_path="/data/storage/condo_2026_09.pdf",
+        boleto_aluguel_path="/data/storage/aluguel_2026_09.pdf",
+        comprovante_pix_path="/data/storage/pix_2026_09.png",
+        status_ciclo=StatusCiclo.PRONTO_PARA_ENVIO,
+        detalhes_verificacao="Boleto condominio, aluguel e comprovante PIX localizados.",
+    )
+    db_session.add(ciclo)
+    db_session.commit()
+
+    response = client.get("/api/ciclos/checklist/mensal")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    item = next((c for c in data if c["competencia"] == "2026-09"), None)
+    assert item is not None
+    assert item["boleto_condominio_encontrado"] is True
+    assert item["boleto_aluguel_encontrado"] is True
+    assert item["comprovante_pix_encontrado"] is True
+    assert Decimal(str(item["despesas_locador"])) == Decimal("354.50")
+    assert Decimal(str(item["descontos_aluguel"])) == Decimal("264.50")
+    assert Decimal(str(item["saldo_residual_devido"])) == Decimal("90.00")
+    assert item["status_ciclo"] == "PRONTO_PARA_ENVIO"
+
+
+def test_get_cycle_checklist_detail(client: TestClient, db_session: Session):
+    """GET /api/ciclos/{id}/checklist returns alerts when documents are missing."""
+    ciclo = CicloCondominio(
+        competencia="2026-11",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 12, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ressarcimento=Decimal("354.50"),
+        valor_desconto_aluguel=Decimal("0.00"),
+        valor_saldo_residual=Decimal("354.50"),
+        boleto_pdf_path=None,
+        boleto_aluguel_path=None,
+        comprovante_pix_path=None,
+        status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+    )
+    db_session.add(ciclo)
+    db_session.commit()
+
+    response = client.get(f"/api/ciclos/{ciclo.id}/checklist")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["boleto_condominio_encontrado"] is False
+    assert data["boleto_aluguel_encontrado"] is False
+    assert data["comprovante_pix_encontrado"] is False
+    assert any("Boleto de condominio" in alert for alert in data["erros_alertas"])
+    assert any("Boleto de aluguel" in alert for alert in data["erros_alertas"])
+    assert any("Comprovante de pagamento PIX" in alert for alert in data["erros_alertas"])
+
+
+def test_submeter_ciclo_blocked_when_saldo_zero(client: TestClient, db_session: Session):
+    """POST /api/ciclos/{id}/submeter is blocked with 400 when saldo_residual == 0."""
+    ciclo = CicloCondominio(
+        competencia="2026-07",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 8, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ressarcimento=Decimal("354.50"),
+        valor_desconto_aluguel=Decimal("354.50"),
+        valor_saldo_residual=Decimal("0.00"),
+        boleto_pdf_path="/data/storage/b.pdf",
+        comprovante_pix_path="/data/storage/p.png",
+        status_ciclo=StatusCiclo.CONCILIADO_SEM_PENDENCIA,
+    )
+    db_session.add(ciclo)
+    db_session.commit()
+
+    response = client.post(f"/api/ciclos/{ciclo.id}/submeter", json={})
+    assert response.status_code == 400
+    assert "conciliado sem pendencia" in response.json()["detail"].lower()
+

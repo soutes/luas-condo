@@ -69,3 +69,29 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    new_columns = [
+        ("boleto_aluguel_path", "VARCHAR(500)"),
+        ("valor_desconto_aluguel", "NUMERIC(10, 2) DEFAULT 0.00"),
+        ("valor_saldo_residual", "NUMERIC(10, 2) DEFAULT 0.00"),
+        ("itens_abatidos_aluguel", "JSON"),
+        ("ultima_verificacao", "TIMESTAMP WITH TIME ZONE"),
+        ("detalhes_verificacao", "TEXT"),
+    ]
+    try:
+        with engine.begin() as conn:
+            for col_name, col_type in new_columns:
+                if conn.dialect.name == "postgresql":
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE ciclos_condominio ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+                    )
+                elif conn.dialect.name == "sqlite":
+                    cols = [
+                        row[1]
+                        for row in conn.exec_driver_sql("PRAGMA table_info(ciclos_condominio)").fetchall()
+                    ]
+                    if col_name not in cols:
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE ciclos_condominio ADD COLUMN {col_name} {col_type}"
+                        )
+    except Exception:
+        pass

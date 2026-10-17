@@ -41,6 +41,13 @@ const statusConfig: Record<
     border: "border-purple-700/50",
     icon: FileCheck,
   },
+  CONCILIADO_SEM_PENDENCIA: {
+    label: "Conciliado (R$ 0)",
+    bg: "bg-emerald-950/30",
+    text: "text-emerald-400",
+    border: "border-emerald-700/50",
+    icon: FileCheck,
+  },
 };
 
 export const CycleCard: React.FC<CycleCardProps> = ({
@@ -50,6 +57,20 @@ export const CycleCard: React.FC<CycleCardProps> = ({
 }) => {
   const statusInfo = statusConfig[ciclo.status_ciclo] || statusConfig.PENDENTE_COMPROVANTE;
   const StatusIcon = statusInfo.icon;
+
+  const descontoAluguel = ciclo.valor_desconto_aluguel
+    ? typeof ciclo.valor_desconto_aluguel === "string"
+      ? parseFloat(ciclo.valor_desconto_aluguel)
+      : ciclo.valor_desconto_aluguel
+    : 0;
+
+  const saldoResidual = ciclo.valor_saldo_residual !== undefined && ciclo.valor_saldo_residual !== null
+    ? typeof ciclo.valor_saldo_residual === "string"
+      ? parseFloat(ciclo.valor_saldo_residual)
+      : ciclo.valor_saldo_residual
+    : typeof ciclo.valor_ressarcimento === "string"
+    ? parseFloat(ciclo.valor_ressarcimento)
+    : ciclo.valor_ressarcimento;
 
   return (
     <div
@@ -78,12 +99,12 @@ export const CycleCard: React.FC<CycleCardProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 text-xs text-slate-400 mb-4">
+      <div className="flex items-center gap-2 text-xs text-slate-400 mb-3">
         <Calendar className="w-3.5 h-3.5 text-slate-500" />
         <span>Vencimento: {formatDateBR(ciclo.data_vencimento)}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-800/80">
+      <div className="grid grid-cols-2 gap-2 pt-2.5 border-t border-slate-800/80">
         <div>
           <span className="text-[10px] uppercase font-medium text-slate-400 block">
             Total Boleto
@@ -95,11 +116,16 @@ export const CycleCard: React.FC<CycleCardProps> = ({
 
         <div className="text-right">
           <span className="text-[10px] uppercase font-medium text-orange-400 block">
-            Ressarcimento
+            {descontoAluguel > 0 ? "Saldo Devido" : "Ressarcimento"}
           </span>
           <span className="text-sm font-bold text-[#f7941d]">
-            {formatBRL(ciclo.valor_ressarcimento)}
+            {formatBRL(saldoResidual)}
           </span>
+          {descontoAluguel > 0 && (
+            <span className="text-[10px] text-emerald-400 block font-mono">
+              (Abatido: -{formatBRL(descontoAluguel)})
+            </span>
+          )}
         </div>
       </div>
     </div>

@@ -516,10 +516,18 @@ async def submit_reimbursement(
             )
             db_session.add(submissao)
 
-            if payload.ciclo_id and receipt.status == StatusSubmissao.SUCESSO:
+            if payload.ciclo_id:
                 ciclo = db_session.get(CicloCondominio, payload.ciclo_id)
                 if ciclo is not None:
-                    ciclo.status_ciclo = StatusCiclo.ENVIADO
+                    ciclo.ultima_verificacao = datetime.now(timezone.utc)
+                    if receipt.status == StatusSubmissao.SUCESSO:
+                        ciclo.status_ciclo = StatusCiclo.ENVIADO
+                        ciclo.detalhes_verificacao = (
+                            f"Pedido de ressarcimento protocolado com sucesso na Ibagy sob o numero "
+                            f"{receipt.protocolo}. Saldo devido: R$ {ciclo.valor_saldo_residual:.2f}."
+                        )
+                    else:
+                        ciclo.detalhes_verificacao = f"Erro na submissao para Ibagy: {receipt.mensagem}"
 
             db_session.commit()
         except Exception as db_exc:

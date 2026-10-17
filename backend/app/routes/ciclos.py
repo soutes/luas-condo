@@ -12,6 +12,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 import httpx
+from decimal import Decimal
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -19,12 +20,14 @@ from app.core.database import get_db
 from app.models.entities import (
     CicloCondominio,
     ResponsabilidadeItem,
+    StatusCiclo,
 )
 from app.schemas.condo import (
     CicloCondominioResponse,
     CicloSubmissaoRequest,
     CicloSubmissaoResponse,
     ItemAuditado,
+    VerificacaoChecklistResponse,
 )
 from app.services.audit_engine import generate_formatted_observations
 from app.services.bitrix_submitter import (
@@ -44,6 +47,53 @@ def set_default_http_client(client: Optional[httpx.AsyncClient]) -> None:
     _default_http_client = client
 
 
+def build_checklist_response(ciclo: CicloCondominio) -> VerificacaoChecklistResponse:
+    boleto_encontrado = bool(ciclo.boleto_pdf_path)
+    comprovante_encontrado = bool(ciclo.comprovante_pix_path)
+    aluguel_encontrado = bool(ciclo.boleto_aluguel_path)
+
+    erros_alertas: list[str] = []
+    if not boleto_encontrado:
+        erros_alertas.append("Boleto de condominio nao localizado para esta competencia")
+    if not aluguel_encontrado:
+        erros_alertas.append("Boleto de aluguel Ibagy nao localizado para esta competencia")
+    if not comprovante_encontrado:
+        erros_alertas.append("Comprovante de pagamento PIX nao localizado para esta competencia")
+
+    status_envio = "NAO_ENVIADO"
+    protocolo_retorno = None
+    if ciclo.submissoes:
+        sub_sorted = sorted(ciclo.submissoes, key=lambda s: s.enviado_em, reverse=True)
+        latest_sub = sub_sorted[0]
+        status_envio = latest_sub.status.value
+        protocolo_retorno = latest_sub.protocolo_retorno
+    elif ciclo.status_ciclo == StatusCiclo.CONCILIADO_SEM_PENDENCIA:
+        status_envio = "DISPENSADO_CONCILIADO"
+
+    if ciclo.status_ciclo == StatusCiclo.CONCILIADO_SEM_PENDENCIA:
+        erros_alertas.append("Todas as despesas do locador foram compensadas automaticamente no aluguel (R$ 0,00 a ressarcir)")
+
+    saldo_devido = ciclo.valor_saldo_residual
+    if saldo_devido == Decimal("0.00") and (ciclo.valor_desconto_aluguel or Decimal("0.00")) == Decimal("0.00") and ciclo.valor_ressarcimento > Decimal("0.00"):
+        saldo_devido = ciclo.valor_ressarcimento
+
+    return VerificacaoChecklistResponse(
+        competencia=ciclo.competencia,
+        boleto_condominio_encontrado=boleto_encontrado,
+        comprovante_pix_encontrado=comprovante_encontrado,
+        boleto_aluguel_encontrado=aluguel_encontrado,
+        despesas_locador=ciclo.valor_ressarcimento,
+        descontos_aluguel=ciclo.valor_desconto_aluguel or Decimal("0.00"),
+        saldo_residual_devido=saldo_devido,
+        status_ciclo=ciclo.status_ciclo,
+        status_envio=status_envio,
+        protocolo_retorno=protocolo_retorno,
+        ultima_verificacao=ciclo.ultima_verificacao or ciclo.criado_em,
+        detalhes=ciclo.detalhes_verificacao,
+        erros_alertas=erros_alertas,
+    )
+
+
 @router.get("", response_model=list[CicloCondominioResponse])
 def list_ciclos(db: Session = Depends(get_db)) -> list[CicloCondominioResponse]:
     """
@@ -58,6 +108,20 @@ def list_ciclos(db: Session = Depends(get_db)) -> list[CicloCondominioResponse]:
     return ciclos
 
 
+@router.get("/checklist/mensal", response_model=list[VerificacaoChecklistResponse])
+def get_monthly_checklist(db: Session = Depends(get_db)) -> list[VerificacaoChecklistResponse]:
+    """
+    Get verification checklist for all monthly cycles, reporting missing documents,
+    reconciliation balances, and submission protocol status.
+    """
+    ciclos = (
+        db.query(CicloCondominio)
+        .order_by(desc(CicloCondominio.data_vencimento), desc(CicloCondominio.criado_em))
+        .all()
+    )
+    return [build_checklist_response(c) for c in ciclos]
+
+
 @router.get("/{ciclo_id}", response_model=CicloCondominioResponse)
 def get_ciclo(ciclo_id: uuid.UUID, db: Session = Depends(get_db)) -> CicloCondominioResponse:
     """
@@ -70,6 +134,20 @@ def get_ciclo(ciclo_id: uuid.UUID, db: Session = Depends(get_db)) -> CicloCondom
             detail=f"Ciclo {ciclo_id} nao encontrado",
         )
     return ciclo
+
+
+@router.get("/{ciclo_id}/checklist", response_model=VerificacaoChecklistResponse)
+def get_cycle_checklist(ciclo_id: uuid.UUID, db: Session = Depends(get_db)) -> VerificacaoChecklistResponse:
+    """
+    Get detailed verification checklist and document audit for a specific condominium cycle.
+    """
+    ciclo = db.get(CicloCondominio, ciclo_id)
+    if not ciclo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ciclo {ciclo_id} nao encontrado",
+        )
+    return build_checklist_response(ciclo)
 
 
 @router.post("/sync-email")
@@ -101,6 +179,20 @@ async def submeter_ciclo(
 
     req = payload_in or CicloSubmissaoRequest()
 
+    effective_saldo = ciclo.valor_saldo_residual
+    if effective_saldo == Decimal("0.00") and (ciclo.valor_desconto_aluguel or Decimal("0.00")) == Decimal("0.00") and ciclo.valor_ressarcimento > Decimal("0.00"):
+        effective_saldo = ciclo.valor_ressarcimento
+
+    # Block submission if residual balance is zero (fully reconciled on rental invoice) unless forced
+    if effective_saldo <= Decimal("0.00") and not req.force:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Ciclo conciliado sem pendencia. Todos os valores devidos pelo locador "
+                "ja foram compensados no boleto de aluguel (saldo residual R$ 0,00)."
+            ),
+        )
+
     # Generate formatted observations memo if not explicitly supplied
     obs_text = req.observacoes
     if not obs_text:
@@ -123,6 +215,13 @@ async def submeter_ciclo(
             total_reimbursement=ciclo.valor_ressarcimento,
             revisao_necessaria=False,
         )
+        if ciclo.valor_desconto_aluguel > Decimal("0.00"):
+            obs_text += (
+                f"\n\n[CONCILIACAO DE ALUGUEL]:\n"
+                f"- Despesas totais do locador apuradas no condominio: R$ {ciclo.valor_ressarcimento:.2f}\n"
+                f"- Creditos/descontos ja concedidos na fatura de aluguel: R$ {ciclo.valor_desconto_aluguel:.2f}\n"
+                f"- Saldo residual pendente solicitado neste protocolo: R$ {ciclo.valor_saldo_residual:.2f}"
+            )
 
     # Resolve boleto file or mock fallback bytes if file path doesn't exist on disk
     boleto_path = ciclo.boleto_pdf_path

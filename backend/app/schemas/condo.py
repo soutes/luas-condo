@@ -46,8 +46,14 @@ class CicloCondominioBase(BaseModel):
     valor_fundos: Decimal = Decimal("0.00")
     valor_leituras: Decimal = Decimal("0.00")
     valor_ressarcimento: Decimal = Decimal("0.00")
-    boleto_pdf_path: str
+    valor_desconto_aluguel: Decimal = Decimal("0.00")
+    valor_saldo_residual: Decimal = Decimal("0.00")
+    boleto_pdf_path: Optional[str] = None
     comprovante_pix_path: Optional[str] = None
+    boleto_aluguel_path: Optional[str] = None
+    itens_abatidos_aluguel: Optional[list[dict[str, Any]]] = None
+    ultima_verificacao: Optional[datetime] = None
+    detalhes_verificacao: Optional[str] = None
     status_ciclo: StatusCiclo = StatusCiclo.PENDENTE_COMPROVANTE
 
 
@@ -109,6 +115,7 @@ class CicloSubmissaoRequest(BaseModel):
     contrato: Optional[str] = None
     observacoes: Optional[str] = None
     use_browser: bool = False
+    force: bool = False
 
 
 class CicloSubmissaoResponse(BaseModel):
@@ -185,3 +192,35 @@ class AuditReport(BaseModel):
     itens_auditados: list[ItemAuditado] = []
     formatted_observations: str
     revisao_necessaria: bool = False
+
+
+# Rental Bill and Reconciliation Schemas
+class ItemDescontoAluguel(BaseModel):
+    descricao: str
+    valor: Decimal
+
+
+class ParsedAluguelBill(BaseModel):
+    competencia: str
+    contrato: str
+    data_vencimento: date
+    valor_total_aluguel: Decimal
+    valor_total_descontos: Decimal
+    itens_desconto: list[ItemDescontoAluguel] = []
+
+
+class VerificacaoChecklistResponse(BaseModel):
+    competencia: str
+    boleto_condominio_encontrado: bool
+    comprovante_pix_encontrado: bool
+    boleto_aluguel_encontrado: bool
+    despesas_locador: Decimal
+    descontos_aluguel: Decimal
+    saldo_residual_devido: Decimal
+    status_ciclo: StatusCiclo
+    status_envio: str
+    protocolo_retorno: Optional[str] = None
+    ultima_verificacao: Optional[datetime] = None
+    detalhes: Optional[str] = None
+    erros_alertas: list[str] = []
+

@@ -26,6 +26,7 @@ class StatusCiclo(str, Enum):
     PRONTO_PARA_ENVIO = "PRONTO_PARA_ENVIO"
     ENVIADO = "ENVIADO"
     PROCESSADO_ALUGUEL = "PROCESSADO_ALUGUEL"
+    CONCILIADO_SEM_PENDENCIA = "CONCILIADO_SEM_PENDENCIA"
 
 
 class CategoriaItem(str, Enum):
@@ -88,9 +89,43 @@ class CicloCondominio(Base):
         nullable=False,
         default=Decimal("0.00"),
     )
-    boleto_pdf_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    boleto_pdf_path: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        default=None,
+    )
     comprovante_pix_path: Mapped[Optional[str]] = mapped_column(
         String(500),
+        nullable=True,
+        default=None,
+    )
+    boleto_aluguel_path: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        default=None,
+    )
+    valor_desconto_aluguel: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        nullable=False,
+        default=Decimal("0.00"),
+    )
+    valor_saldo_residual: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        nullable=False,
+        default=Decimal("0.00"),
+    )
+    itens_abatidos_aluguel: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+    )
+    ultima_verificacao: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+    detalhes_verificacao: Mapped[Optional[str]] = mapped_column(
+        Text,
         nullable=True,
         default=None,
     )

@@ -26,9 +26,18 @@ const FALLBACK_DEFAULT_CYCLES: Ciclo[] = [
     valor_fundos: 0.0,
     valor_leituras: 0.0,
     valor_ressarcimento: 354.5,
+    valor_desconto_aluguel: 264.5,
+    valor_saldo_residual: 90.0,
     boleto_pdf_path: "/data/boletos/villa_salomy_2026_09.pdf",
+    boleto_aluguel_path: "/data/boletos/aluguel_ibagy_2026_09.pdf",
     comprovante_pix_path: "/data/comprovantes/pix_2026_09.pdf",
+    itens_abatidos_aluguel: [
+      { descricao: "Fundo de Reserva", valor: 56.21 },
+      { descricao: "Rateio manutencao fachada (5/10)", valor: 208.29 },
+    ],
     status_ciclo: "PRONTO_PARA_ENVIO",
+    detalhes_verificacao:
+      "Boleto condominio, boleto aluguel e comprovante PIX localizados. Saldo residual pendente: R$ 90,00.",
     criado_em: "2026-10-16T18:00:00Z",
     itens: [
       {
@@ -272,7 +281,9 @@ export const App: React.FC = () => {
               {formatBRL(selectedCiclo ? selectedCiclo.valor_ressarcimento : 354.5)}
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              Deducao de Fundo / Reforma no aluguel
+              {selectedCiclo && selectedCiclo.valor_desconto_aluguel && parseFloat(String(selectedCiclo.valor_desconto_aluguel)) > 0
+                ? `Abatido aluguel: -${formatBRL(selectedCiclo.valor_desconto_aluguel)} | Saldo devido: ${formatBRL(selectedCiclo.valor_saldo_residual || 90.0)}`
+                : "Deducao de Fundo / Reforma no aluguel"}
             </p>
           </div>
 

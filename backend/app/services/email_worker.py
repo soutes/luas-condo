@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import CicloCondominio, ItemRateio, StatusCiclo
 from app.services.audit_engine import audit_condo_bill
+from app.services.parser_aluguel import parse_aluguel_pdf
 from app.services.parser_boleto import (
     decrypt_pdf_bytes,
     extract_pdf_text,
@@ -47,6 +48,7 @@ __all__ = [
 class DocumentType(str, Enum):
     CONDO_BILL = "CONDO_BILL"
     PIX_RECEIPT = "PIX_RECEIPT"
+    RENTAL_BILL = "RENTAL_BILL"
     UNKNOWN = "UNKNOWN"
 
 
@@ -217,6 +219,12 @@ def classify_attachment(
     meta_text = f"{attachment.filename} {email_subject} {email_body}".upper()
     pdf_text_upper = extracted_pdf_text.upper()
     combined_upper = f"{meta_text} {pdf_text_upper}"
+
+    # Fast path: Ibagy rental bill detection
+    is_ibagy_sender = "IBAGY" in email_sender.upper() or "BOLETO@IBAGYIMOBILIARIA.COM.BR" in email_sender.upper()
+    is_ibagy_pdf = "IBAGY" in pdf_text_upper or "09638.003.03" in pdf_text_upper or "ALUGUEL C(PROP)" in pdf_text_upper
+    if is_pdf and (is_ibagy_sender or is_ibagy_pdf):
+        return DocumentType.RENTAL_BILL
 
     pix_keywords = [
         "COMPROVANTE",
@@ -582,8 +590,9 @@ def sync_condo_cycle(
 
     affected_cycles: dict[str, CicloCondominio] = {}
 
-    # Separate into bills and receipts
+    # Separate into bills, rental bills, and receipts
     bills = [d for d in ingested_docs if d.doc_type == DocumentType.CONDO_BILL]
+    rental_bills = [d for d in ingested_docs if d.doc_type == DocumentType.RENTAL_BILL]
     receipts = [d for d in ingested_docs if d.doc_type == DocumentType.PIX_RECEIPT]
 
     # 1. Process Condo Bills first
@@ -614,8 +623,11 @@ def sync_condo_cycle(
                 valor_fundos=parsed_bill.valor_fundos,
                 valor_leituras=parsed_bill.valor_leituras,
                 valor_ressarcimento=audit_report.total_reimbursement,
+                valor_saldo_residual=audit_report.total_reimbursement,
                 boleto_pdf_path=str(file_path),
                 status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+                ultima_verificacao=datetime.now(timezone.utc),
+                detalhes_verificacao="Boleto de condominio processado. Aguardando comprovante PIX e boleto do aluguel.",
             )
             db_session.add(ciclo)
             db_session.flush()
@@ -648,12 +660,115 @@ def sync_condo_cycle(
         else:
             ciclo.boleto_pdf_path = str(file_path)
             ciclo.valor_total = parsed_bill.valor_total
+            ciclo.valor_ordinarias = parsed_bill.valor_ordinarias
+            ciclo.valor_extraordinarias = parsed_bill.valor_extraordinarias
+            ciclo.valor_fundos = parsed_bill.valor_fundos
+            ciclo.valor_leituras = parsed_bill.valor_leituras
             ciclo.valor_ressarcimento = audit_report.total_reimbursement
+            desconto = ciclo.valor_desconto_aluguel or Decimal("0.00")
+            saldo = ciclo.valor_ressarcimento - desconto
+            ciclo.valor_saldo_residual = max(Decimal("0.00"), saldo)
+            ciclo.ultima_verificacao = datetime.now(timezone.utc)
+
+            if ciclo.valor_saldo_residual <= Decimal("0.00"):
+                ciclo.status_ciclo = StatusCiclo.CONCILIADO_SEM_PENDENCIA
+                ciclo.detalhes_verificacao = (
+                    f"Conciliado sem pendencia. Total locador R$ {ciclo.valor_ressarcimento:.2f} "
+                    f"totalmente abatido na fatura de aluguel (R$ {desconto:.2f})."
+                )
+            elif ciclo.comprovante_pix_path:
+                ciclo.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
+                ciclo.detalhes_verificacao = (
+                    f"Boleto condominio, aluguel e comprovante PIX localizados. "
+                    f"Saldo residual pendente: R$ {ciclo.valor_saldo_residual:.2f}."
+                )
+            else:
+                ciclo.status_ciclo = StatusCiclo.PENDENTE_COMPROVANTE
+                ciclo.detalhes_verificacao = (
+                    f"Boleto condominio processado. Saldo residual: R$ {ciclo.valor_saldo_residual:.2f}. "
+                    f"Aguardando comprovante PIX."
+                )
             db_session.flush()
 
         affected_cycles[ciclo.competencia] = ciclo
 
-    # 2. Process PIX Receipts
+    # 2. Process Rental Bills (Ibagy)
+    for rental_doc in rental_bills:
+        file_path = storage_path / rental_doc.filename
+        file_path.write_bytes(rental_doc.content)
+
+        parsed_aluguel = parse_aluguel_pdf(rental_doc.content, password="04293")
+
+        ciclo = (
+            db_session.query(CicloCondominio)
+            .filter_by(competencia=parsed_aluguel.competencia)
+            .first()
+        )
+
+        itens_dict = [
+            {"descricao": it.descricao, "valor": float(it.valor)}
+            for it in parsed_aluguel.itens_desconto
+        ]
+
+        if ciclo is None:
+            ciclo = CicloCondominio(
+                competencia=parsed_aluguel.competencia,
+                condominio_nome=os.getenv(
+                    "CONDOMINIO_NOME_PADRAO",
+                    "Condominio Edificio Villa Salomy",
+                ),
+                data_vencimento=parsed_aluguel.data_vencimento,
+                valor_total=Decimal("0.00"),
+                valor_ordinarias=Decimal("0.00"),
+                valor_extraordinarias=Decimal("0.00"),
+                valor_fundos=Decimal("0.00"),
+                valor_leituras=Decimal("0.00"),
+                valor_ressarcimento=Decimal("0.00"),
+                valor_desconto_aluguel=parsed_aluguel.valor_total_descontos,
+                valor_saldo_residual=Decimal("0.00"),
+                boleto_pdf_path="",
+                boleto_aluguel_path=str(file_path),
+                itens_abatidos_aluguel=itens_dict,
+                status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+                ultima_verificacao=datetime.now(timezone.utc),
+                detalhes_verificacao=(
+                    f"Boleto de aluguel processado. Descontos apurados: R$ "
+                    f"{parsed_aluguel.valor_total_descontos:.2f}. Aguardando boleto de condominio."
+                ),
+            )
+            db_session.add(ciclo)
+            db_session.flush()
+        else:
+            ciclo.boleto_aluguel_path = str(file_path)
+            ciclo.valor_desconto_aluguel = parsed_aluguel.valor_total_descontos
+            ciclo.itens_abatidos_aluguel = itens_dict
+            saldo = ciclo.valor_ressarcimento - parsed_aluguel.valor_total_descontos
+            ciclo.valor_saldo_residual = max(Decimal("0.00"), saldo)
+            ciclo.ultima_verificacao = datetime.now(timezone.utc)
+
+            if ciclo.valor_saldo_residual <= Decimal("0.00"):
+                ciclo.status_ciclo = StatusCiclo.CONCILIADO_SEM_PENDENCIA
+                ciclo.detalhes_verificacao = (
+                    f"Conciliado sem pendencia. Total locador R$ {ciclo.valor_ressarcimento:.2f} "
+                    f"totalmente abatido na fatura de aluguel (R$ {ciclo.valor_desconto_aluguel:.2f})."
+                )
+            elif ciclo.comprovante_pix_path:
+                ciclo.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
+                ciclo.detalhes_verificacao = (
+                    f"Boleto condominio, aluguel e comprovante PIX localizados. "
+                    f"Saldo residual pendente: R$ {ciclo.valor_saldo_residual:.2f}."
+                )
+            else:
+                ciclo.status_ciclo = StatusCiclo.PENDENTE_COMPROVANTE
+                ciclo.detalhes_verificacao = (
+                    f"Boleto condominio e aluguel localizados. "
+                    f"Saldo residual: R$ {ciclo.valor_saldo_residual:.2f}. Aguardando comprovante PIX."
+                )
+            db_session.flush()
+
+        affected_cycles[ciclo.competencia] = ciclo
+
+    # 3. Process PIX Receipts
     if receipts:
         all_cycles = db_session.query(CicloCondominio).all()
         for pix_doc in receipts:
@@ -770,7 +885,26 @@ def sync_condo_cycle(
 
             if best_match is not None:
                 best_match.comprovante_pix_path = str(file_path)
-                best_match.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
+                best_match.ultima_verificacao = datetime.now(timezone.utc)
+                saldo = best_match.valor_saldo_residual
+                if (
+                    saldo == Decimal("0.00")
+                    and (best_match.valor_desconto_aluguel or Decimal("0.00")) == Decimal("0.00")
+                    and best_match.valor_ressarcimento > Decimal("0.00")
+                ):
+                    saldo = best_match.valor_ressarcimento
+                    best_match.valor_saldo_residual = saldo
+
+                if saldo <= Decimal("0.00"):
+                    best_match.status_ciclo = StatusCiclo.CONCILIADO_SEM_PENDENCIA
+                    best_match.detalhes_verificacao = (
+                        "Comprovante PIX vinculado. Ciclo conciliado sem pendencia (R$ 0,00 a ressarcir)."
+                    )
+                else:
+                    best_match.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
+                    best_match.detalhes_verificacao = (
+                        f"Comprovante PIX vinculado. Pronto para submissao do saldo residual de R$ {saldo:.2f}."
+                    )
                 affected_cycles[best_match.competencia] = best_match
                 db_session.flush()
 

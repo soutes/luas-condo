@@ -77,6 +77,19 @@ async def execute_email_sync(
         )
 
         if not docs:
+            pending_cycles = (
+                db.query(CicloCondominio)
+                .filter(
+                    CicloCondominio.status_ciclo.in_([
+                        StatusCiclo.PENDENTE_COMPROVANTE,
+                        StatusCiclo.PRONTO_PARA_ENVIO,
+                    ])
+                )
+                .all()
+            )
+            for c in pending_cycles:
+                c.ultima_verificacao = datetime.now(timezone.utc)
+            db.commit()
             return {
                 "status": "ok",
                 "detail": "Nenhum novo documento de condominio ou comprovante localizado",
