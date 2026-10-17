@@ -46,6 +46,9 @@ services:
       IMAP_USER: ${IMAP_USER:-}
       IMAP_PASSWORD: ${IMAP_PASSWORD:-}
       IMAP_READ_ONLY: ${IMAP_READ_ONLY:-true}
+      AUTO_SUBMIT: ${AUTO_SUBMIT:-true}
+      POLL_WINDOW_START_DAY: ${POLL_WINDOW_START_DAY:-7}
+      POLL_WINDOW_END_DAY: ${POLL_WINDOW_END_DAY:-12}
       SECRET_KEY: ${SECRET_KEY:-change-this-in-production}
     depends_on:
       db:
