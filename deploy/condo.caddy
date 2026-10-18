@@ -4,7 +4,7 @@
 condo.147-15-76-139.sslip.io {
 	encode gzip
 
-	handle /api/* {
+	handle /api* {
 		reverse_proxy luas_condo_backend:8000 {
 			lb_try_duration 5s
 			transport http {
