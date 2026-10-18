@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Scale,
   Mail,
+  AlertCircle,
 } from "lucide-react";
 
 const FALLBACK_DEFAULT_CYCLES: Ciclo[] = [
@@ -73,6 +74,9 @@ export const App: React.FC = () => {
     protocolo?: string | null;
     mensagem: string;
   } | null>(null);
+  const [sampleOffline, setSampleOffline] = useState<boolean>(false);
+  const [seeding, setSeeding] = useState<boolean>(false);
+  const [seedMessage, setSeedMessage] = useState<string | null>(null);
 
   const handleSyncEmail = async () => {
     setSyncingEmail(true);
@@ -89,6 +93,27 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSeedDemo = async () => {
+    setSeeding(true);
+    setSeedMessage(null);
+    try {
+      const res = await fetch("/api/ciclos/seed-demo", { method: "POST" });
+      if (res.ok) {
+        setSeedMessage(
+          "Ciclo de demonstracao carregado (referencia Villa Salomy, submissao em modo mock)."
+        );
+        await fetchCiclos();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setSeedMessage(errData.detail || "Nao foi possivel carregar o ciclo de demonstracao");
+      }
+    } catch {
+      setSeedMessage("Erro de rede ao carregar o ciclo de demonstracao");
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const fetchCiclos = async () => {
     setLoading(true);
     try {
@@ -97,22 +122,28 @@ export const App: React.FC = () => {
         const data: Ciclo[] = await res.json();
         if (data && data.length > 0) {
           setCiclos(data);
+          setSampleOffline(false);
           if (!selectedCicloId || !data.some((c) => c.id === selectedCicloId)) {
             setSelectedCicloId(data[0].id);
           }
         } else {
-          // If database has no cycles yet, use sample reference data
-          setCiclos(FALLBACK_DEFAULT_CYCLES);
-          setSelectedCicloId(FALLBACK_DEFAULT_CYCLES[0].id);
+          // Healthy API but no cycles yet: show the explicit empty state instead
+          // of sample data (submitting a sample id would fail with 404).
+          setCiclos([]);
+          setSelectedCicloId("");
+          setSampleOffline(false);
         }
       } else {
+        // API reachable but erroring: offline demo fallback, submission disabled
         setCiclos(FALLBACK_DEFAULT_CYCLES);
         setSelectedCicloId(FALLBACK_DEFAULT_CYCLES[0].id);
+        setSampleOffline(true);
       }
     } catch {
-      // Offline / dev fallback
+      // Offline / dev fallback: sample data clearly flagged, submission disabled
       setCiclos(FALLBACK_DEFAULT_CYCLES);
       setSelectedCicloId(FALLBACK_DEFAULT_CYCLES[0].id);
+      setSampleOffline(true);
     } finally {
       setLoading(false);
     }
@@ -267,6 +298,54 @@ export const App: React.FC = () => {
           </div>
         )}
 
+        {sampleOffline && (
+          <div className="p-3 bg-amber-950/40 border border-amber-700/60 text-xs text-amber-200 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>
+              Dados de amostra exibidos (API indisponivel). A submissao esta desabilitada.
+            </span>
+          </div>
+        )}
+
+        {!loading && ciclos.length === 0 && (
+          <div className="p-8 bg-slate-900 border border-slate-800 rounded-none text-center space-y-4">
+            <Layers className="w-10 h-10 text-slate-600 mx-auto" />
+            <h2 className="text-lg font-black text-slate-100 uppercase tracking-wider">
+              Nenhum ciclo no banco de dados
+            </h2>
+            <p className="text-sm text-slate-400 max-w-xl mx-auto">
+              Ainda nao existem ciclos auditados. Use "Sincronizar E-mail" para ingerir os
+              boletos reais da caixa de entrada, ou carregue o ciclo de demonstracao
+              (referencia Villa Salomy) para testar o fluxo de submissao em modo mock.
+            </p>
+            {seedMessage && (
+              <div className="p-2.5 border border-slate-700 bg-slate-950 text-xs text-slate-200 max-w-xl mx-auto">
+                {seedMessage}
+              </div>
+            )}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={handleSeedDemo}
+                disabled={seeding}
+                className="px-5 py-2.5 bg-[#f7941d] hover:bg-[#e08316] disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold text-xs uppercase tracking-wider rounded-none transition-colors"
+              >
+                {seeding ? "Carregando..." : "Carregar Ciclo de Demonstracao"}
+              </button>
+              <button
+                type="button"
+                onClick={handleSyncEmail}
+                disabled={syncingEmail}
+                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-200 border border-slate-700 text-xs uppercase tracking-wider rounded-none transition-colors"
+              >
+                {syncingEmail ? "Verificando..." : "Sincronizar E-mail"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(loading || ciclos.length > 0) && (
+          <>
         {/* KPI Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Reference Reimbursement Card */}
@@ -378,9 +457,12 @@ export const App: React.FC = () => {
                 isSubmitting={submitting}
                 onSubmit={handleSubmeter}
                 submissionResult={submissionResult}
+                submitDisabled={sampleOffline}
               />
             </div>
           </div>
+        )}
+          </>
         )}
       </main>
 

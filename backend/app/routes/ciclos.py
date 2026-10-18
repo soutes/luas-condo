@@ -160,6 +160,32 @@ async def trigger_email_sync(db: Session = Depends(get_db)):
     return res
 
 
+@router.post("/seed-demo", response_model=CicloCondominioResponse)
+def seed_demo_cycle(db: Session = Depends(get_db)) -> CicloCondominioResponse:
+    """
+    Create the reference Villa Salomy demo cycle so the dashboard has submittable
+    data before real ingestion happens. Only available while MOCK_SUBMISSION=true:
+    sample data must never enter a production database filing real claims.
+    """
+    from app.seed import seed_production_cycle
+
+    mock_submission = os.getenv("MOCK_SUBMISSION", "true").strip().lower() == "true"
+    if not mock_submission:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Seed demo bloqueado: MOCK_SUBMISSION=false (modo producao). "
+                "Dados de amostra nao podem ser inseridos no banco de producao."
+            ),
+        )
+
+    ciclo = seed_production_cycle(
+        db=db, storage_dir=os.getenv("STORAGE_DIR", "/data/storage"), reset_existing=False
+    )
+    db.refresh(ciclo)
+    return ciclo
+
+
 @router.post("/{ciclo_id}/submeter", response_model=CicloSubmissaoResponse)
 async def submeter_ciclo(
     ciclo_id: uuid.UUID,

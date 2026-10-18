@@ -21,6 +21,7 @@ export interface SubmissionPreviewProps {
     protocolo?: string | null;
     mensagem: string;
   } | null;
+  submitDisabled?: boolean;
 }
 
 export const SubmissionPreview: React.FC<SubmissionPreviewProps> = ({
@@ -28,6 +29,7 @@ export const SubmissionPreview: React.FC<SubmissionPreviewProps> = ({
   isSubmitting,
   onSubmit,
   submissionResult,
+  submitDisabled = false,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -375,7 +377,7 @@ export const SubmissionPreview: React.FC<SubmissionPreviewProps> = ({
           ) : (
             <button
               type="button"
-              disabled={isSubmitting || !hasComprovante}
+              disabled={isSubmitting || !hasComprovante || submitDisabled}
               onClick={() => onSubmit(memo)}
               className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#f7941d] hover:bg-[#e08316] text-slate-950 font-bold text-sm uppercase tracking-wider rounded-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-[#f7941d]/10"
             >

@@ -139,6 +139,12 @@ This verifies:
 To demonstrate end-to-end functionality using the pre-seeded reference cycle:
 
 1. **Access Web Dashboard**: Open `http://localhost:5173` in any browser.
+   On a fresh deployment the database is empty and the dashboard shows the
+   "Nenhum ciclo no banco de dados" empty state. Click **"Carregar Ciclo de
+   Demonstracao"** (calls `POST /api/ciclos/seed-demo`, available only while
+   `MOCK_SUBMISSION=true`) or use **"Sincronizar E-mail"** to ingest real bills.
+   The dashboard never displays sample data as if it were real database content;
+   when the API is unreachable the sample is flagged and submission is disabled.
 2. **Review Header KPI**: Observe contract `09638.003.03`, status `AUDITADO`, and reference reimbursement amount `R$ 354,50`.
 3. **Inspect Audit Table**:
    - Click the "Despesas do Locador" (Landlord Expenses) filter tab.

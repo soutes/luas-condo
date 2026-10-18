@@ -46,6 +46,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - luas_condo_storage:/data/storage
     networks:
       - default
       - web
@@ -105,6 +106,7 @@ services:
 
 volumes:
   pgdata:
+  luas_condo_storage:
 
 networks:
   default:
