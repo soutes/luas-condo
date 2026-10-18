@@ -13,6 +13,7 @@ from email.header import decode_header
 import email.utils
 from enum import Enum
 import io
+import logging
 import os
 from pathlib import Path
 import re
@@ -21,12 +22,14 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import CicloCondominio, ItemRateio, StatusCiclo
 from app.services.audit_engine import audit_condo_bill
-from app.services.parser_aluguel import parse_aluguel_pdf
+from app.services.parser_aluguel import ParsedAluguelBill, parse_aluguel_pdf
 from app.services.parser_boleto import (
     decrypt_pdf_bytes,
     extract_pdf_text,
     parse_condo_pdf,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DocumentType",
@@ -40,9 +43,20 @@ __all__ = [
     "fetch_new_condo_emails",
     "parse_email_message",
     "parse_syndkos_email_subject",
+    "previous_month",
     "process_inbound_message",
     "sync_condo_cycle",
+    "sync_retroativo_lote",
 ]
+
+
+def previous_month(competencia: str) -> str:
+    """Return the previous month of a YYYY-MM competence (with year rollover)."""
+    year_str, month_str = competencia.split("-")
+    year, month = int(year_str), int(month_str)
+    if month == 1:
+        return f"{year - 1:04d}-12"
+    return f"{year:04d}-{month - 1:02d}"
 
 
 class DocumentType(str, Enum):
@@ -714,79 +728,57 @@ def sync_condo_cycle(
 
         affected_cycles[ciclo.competencia] = ciclo
 
-    # 2. Process Rental Bills (Ibagy)
+    # 2. Process Rental Bills (Ibagy) - monthly flow: conferencia-only.
+    # A rental bill NEVER creates a cycle and NEVER reconciles a pending one:
+    # the Ibagy invoice of competence M carries the discount applied to the
+    # previous month's condo bill (competence M-1). It only CLOSES a cycle that
+    # was already submitted (ENVIADO): discount came in full -> PROCESSADO_ALUGUEL;
+    # discount came short -> divergence recorded in the details.
     for rental_doc in rental_bills:
         file_path = storage_path / rental_doc.filename
         file_path.write_bytes(rental_doc.content)
 
-        parsed_aluguel = parse_aluguel_pdf(rental_doc.content, password="04293")
+        try:
+            parsed_aluguel = parse_aluguel_pdf(rental_doc.content, password="04293")
+        except Exception as exc:
+            logger.warning("Falha ao parsear fatura de aluguel %s: %s", rental_doc.filename, exc)
+            continue
 
+        prev_competencia = previous_month(parsed_aluguel.competencia)
         ciclo = (
             db_session.query(CicloCondominio)
-            .filter_by(competencia=parsed_aluguel.competencia)
+            .filter_by(competencia=prev_competencia)
             .first()
         )
 
-        itens_dict = [
+        if ciclo is None or ciclo.status_ciclo != StatusCiclo.ENVIADO:
+            # Nothing to verify: without a submitted previous cycle the rental
+            # invoice is archived without effect (mensal flow ignores aluguel).
+            continue
+
+        ciclo.boleto_aluguel_path = str(file_path)
+        ciclo.valor_desconto_aluguel = parsed_aluguel.valor_total_descontos
+        ciclo.itens_abatidos_aluguel = [
             {"descricao": it.descricao, "valor": float(it.valor)}
             for it in parsed_aluguel.itens_desconto
         ]
+        ciclo.ultima_verificacao = datetime.now(timezone.utc)
 
-        if ciclo is None:
-            ciclo = CicloCondominio(
-                competencia=parsed_aluguel.competencia,
-                condominio_nome=os.getenv(
-                    "CONDOMINIO_NOME_PADRAO",
-                    "Condominio Edificio Villa Salomy",
-                ),
-                data_vencimento=parsed_aluguel.data_vencimento,
-                valor_total=Decimal("0.00"),
-                valor_ordinarias=Decimal("0.00"),
-                valor_extraordinarias=Decimal("0.00"),
-                valor_fundos=Decimal("0.00"),
-                valor_leituras=Decimal("0.00"),
-                valor_ressarcimento=Decimal("0.00"),
-                valor_desconto_aluguel=parsed_aluguel.valor_total_descontos,
-                valor_saldo_residual=Decimal("0.00"),
-                boleto_pdf_path="",
-                boleto_aluguel_path=str(file_path),
-                itens_abatidos_aluguel=itens_dict,
-                status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
-                ultima_verificacao=datetime.now(timezone.utc),
-                detalhes_verificacao=(
-                    f"Boleto de aluguel processado. Descontos apurados: R$ "
-                    f"{parsed_aluguel.valor_total_descontos:.2f}. Aguardando boleto de condominio."
-                ),
+        if parsed_aluguel.valor_total_descontos >= ciclo.valor_ressarcimento:
+            ciclo.status_ciclo = StatusCiclo.PROCESSADO_ALUGUEL
+            ciclo.detalhes_verificacao = (
+                f"Fatura de aluguel seguinte ({parsed_aluguel.competencia}) descontou "
+                f"R$ {parsed_aluguel.valor_total_descontos:.2f} de R$ {ciclo.valor_ressarcimento:.2f} "
+                f"solicitados no protocolo. Ciclo encerrado."
             )
-            db_session.add(ciclo)
-            db_session.flush()
         else:
-            ciclo.boleto_aluguel_path = str(file_path)
-            ciclo.valor_desconto_aluguel = parsed_aluguel.valor_total_descontos
-            ciclo.itens_abatidos_aluguel = itens_dict
-            saldo = ciclo.valor_ressarcimento - parsed_aluguel.valor_total_descontos
-            ciclo.valor_saldo_residual = max(Decimal("0.00"), saldo)
-            ciclo.ultima_verificacao = datetime.now(timezone.utc)
-
-            if ciclo.valor_saldo_residual <= Decimal("0.00"):
-                ciclo.status_ciclo = StatusCiclo.CONCILIADO_SEM_PENDENCIA
-                ciclo.detalhes_verificacao = (
-                    f"Conciliado sem pendencia. Total locador R$ {ciclo.valor_ressarcimento:.2f} "
-                    f"totalmente abatido na fatura de aluguel (R$ {ciclo.valor_desconto_aluguel:.2f})."
-                )
-            elif ciclo.comprovante_pix_path:
-                ciclo.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
-                ciclo.detalhes_verificacao = (
-                    f"Boleto condominio, aluguel e comprovante PIX localizados. "
-                    f"Saldo residual pendente: R$ {ciclo.valor_saldo_residual:.2f}."
-                )
-            else:
-                ciclo.status_ciclo = StatusCiclo.PENDENTE_COMPROVANTE
-                ciclo.detalhes_verificacao = (
-                    f"Boleto condominio e aluguel localizados. "
-                    f"Saldo residual: R$ {ciclo.valor_saldo_residual:.2f}. Aguardando comprovante PIX."
-                )
-            db_session.flush()
+            divergencia = ciclo.valor_ressarcimento - parsed_aluguel.valor_total_descontos
+            ciclo.detalhes_verificacao = (
+                f"DIVERGENCIA: fatura de aluguel seguinte ({parsed_aluguel.competencia}) descontou "
+                f"apenas R$ {parsed_aluguel.valor_total_descontos:.2f} de R$ {ciclo.valor_ressarcimento:.2f} "
+                f"solicitados no protocolo (faltam R$ {divergencia:.2f}). Verificar com a Ibagy."
+            )
+        db_session.flush()
 
         affected_cycles[ciclo.competencia] = ciclo
 
@@ -932,3 +924,160 @@ def sync_condo_cycle(
 
     db_session.commit()
     return list(affected_cycles.values())
+
+
+def _atualizar_status_apos_conferencia(ciclo: CicloCondominio) -> None:
+    """
+    Retroactive conferencia status: diferenca = ressarcimento apurado - desconto
+    ja aplicado pela Ibagy na fatura seguinte.
+    - diferenca <= 0: TUDO OK - fatura seguinte cobriu integralmente; nothing to
+      submit (CONCILIADO_SEM_PENDENCIA).
+    - diferenca > 0 with PIX attached: PRONTO_PARA_ENVIO - suggest submitting the
+      difference to Ibagy.
+    - diferenca > 0 without PIX: PENDENTE_COMPROVANTE.
+    Terminal cycles (ENVIADO / PROCESSADO_ALUGUEL) are never reopened.
+    """
+    if ciclo.status_ciclo in (StatusCiclo.ENVIADO, StatusCiclo.PROCESSADO_ALUGUEL):
+        return
+
+    desconto = ciclo.valor_desconto_aluguel or Decimal("0.00")
+    diferenca = max(Decimal("0.00"), ciclo.valor_ressarcimento - desconto)
+    ciclo.valor_saldo_residual = diferenca
+
+    if diferenca <= Decimal("0.00"):
+        ciclo.status_ciclo = StatusCiclo.CONCILIADO_SEM_PENDENCIA
+        ciclo.detalhes_verificacao = (
+            "Tudo ok: a fatura de aluguel seguinte ja descontou integralmente o valor do locador "
+            f"(desconto R$ {desconto:.2f} >= apurado R$ {ciclo.valor_ressarcimento:.2f}). "
+            "Nenhum pedido necessario."
+        )
+    elif ciclo.comprovante_pix_path:
+        ciclo.status_ciclo = StatusCiclo.PRONTO_PARA_ENVIO
+        ciclo.detalhes_verificacao = (
+            f"Diferenca apurada: R$ {diferenca:.2f} (locador R$ {ciclo.valor_ressarcimento:.2f} - "
+            f"desconto ja aplicado na fatura seguinte R$ {desconto:.2f}). "
+            "Sugerido: enviar pedido de ressarcimento a Ibagy."
+        )
+    else:
+        ciclo.status_ciclo = StatusCiclo.PENDENTE_COMPROVANTE
+        ciclo.detalhes_verificacao = (
+            f"Diferenca apurada: R$ {diferenca:.2f} (locador R$ {ciclo.valor_ressarcimento:.2f} - "
+            f"desconto ja aplicado R$ {desconto:.2f}). Aguardando comprovante PIX para habilitar o envio."
+        )
+
+
+def _aplicar_conferencia_aluguel(
+    ciclo: CicloCondominio,
+    parsed_aluguel: ParsedAluguelBill,
+    file_path: Path,
+) -> None:
+    """Attach the following-month rental invoice to a retroactive cycle as
+    conferencia evidence and recompute the difference-based status."""
+    ciclo.boleto_aluguel_path = str(file_path)
+    ciclo.valor_desconto_aluguel = parsed_aluguel.valor_total_descontos
+    ciclo.itens_abatidos_aluguel = [
+        {"descricao": it.descricao, "valor": float(it.valor)}
+        for it in parsed_aluguel.itens_desconto
+    ]
+    ciclo.ultima_verificacao = datetime.now(timezone.utc)
+    _atualizar_status_apos_conferencia(ciclo)
+
+
+def sync_retroativo_lote(
+    db_session: Session,
+    ingested_docs: list[IngestedDocument],
+    storage_dir: str = "/data/storage",
+    hint_competencia: Optional[str] = None,
+) -> tuple[list[CicloCondominio], list[dict]]:
+    """
+    Retroactive batch sync (Documentos Retroativos tab). Rules:
+    - The condo bill defines the cycle; its own extracted competencia is the
+      cycle competence (the rental bill of the following month is conferencia
+      evidence only and is NEVER submitted).
+    - The rental bill is matched to the cycle created by the batch's condo bill
+      (or, in separate uploads, to the cycle of the month preceding the invoice).
+      Comparison: diferenca = ressarcimento - desconto_ja_aplicado.
+      diferenca <= 0 -> TUDO OK (CONCILIADO_SEM_PENDENCIA, nothing to submit).
+      diferenca > 0  -> PRONTO_PARA_ENVIO (suggest submitting the difference).
+    - PIX receipts pair with the batch's cycle when the batch has exactly one
+      cycle; otherwise fall back to the corpus/competencia-hint matching.
+    - A document that fails to parse is reported in `falhas` without aborting
+      the remaining batch.
+    """
+    storage_path = Path(storage_dir)
+    storage_path.mkdir(parents=True, exist_ok=True)
+
+    bills = [d for d in ingested_docs if d.doc_type == DocumentType.CONDO_BILL]
+    rental_bills = [d for d in ingested_docs if d.doc_type == DocumentType.RENTAL_BILL]
+    receipts = [d for d in ingested_docs if d.doc_type == DocumentType.PIX_RECEIPT]
+
+    ciclos: dict[str, CicloCondominio] = {}
+    falhas: list[dict] = []
+
+    # 1. Condo bills define the lote cycles (same engine/audit as email flow)
+    for bill_doc in bills:
+        try:
+            for ciclo in sync_condo_cycle(db_session, [bill_doc], storage_dir=storage_dir):
+                ciclos[ciclo.competencia] = ciclo
+        except Exception as exc:
+            logger.warning("Falha ao processar boleto %s: %s", bill_doc.filename, exc)
+            falhas.append({"arquivo": bill_doc.filename, "erro": str(exc)})
+            db_session.rollback()
+
+    # 2. Rental bills: conferencia-only against the lote cycle (or previous month)
+    for rental_doc in rental_bills:
+        try:
+            file_path = storage_path / rental_doc.filename
+            file_path.write_bytes(rental_doc.content)
+            parsed_aluguel = parse_aluguel_pdf(rental_doc.content, password="04293")
+
+            if len(ciclos) == 1:
+                ciclo = next(iter(ciclos.values()))
+            else:
+                ciclo = (
+                    db_session.query(CicloCondominio)
+                    .filter_by(competencia=previous_month(parsed_aluguel.competencia))
+                    .first()
+                )
+            if ciclo is None:
+                falhas.append({
+                    "arquivo": rental_doc.filename,
+                    "erro": (
+                        f"Fatura de aluguel ({parsed_aluguel.competencia}) sem ciclo de "
+                        "condominio anterior para conferencia"
+                    ),
+                })
+                continue
+
+            _aplicar_conferencia_aluguel(ciclo, parsed_aluguel, file_path)
+            db_session.flush()
+            ciclos[ciclo.competencia] = ciclo
+        except Exception as exc:
+            logger.warning("Falha ao conferir fatura %s: %s", rental_doc.filename, exc)
+            falhas.append({"arquivo": rental_doc.filename, "erro": str(exc)})
+            db_session.rollback()
+
+    # 3. PIX receipts: pair with the batch cycle when unambiguous, else corpus hint
+    for pix_doc in receipts:
+        try:
+            if len(ciclos) == 1:
+                ciclo = next(iter(ciclos.values()))
+                file_path = storage_path / pix_doc.filename
+                file_path.write_bytes(pix_doc.content)
+                ciclo.comprovante_pix_path = str(file_path)
+                ciclo.ultima_verificacao = datetime.now(timezone.utc)
+                _atualizar_status_apos_conferencia(ciclo)
+                db_session.flush()
+                ciclos[ciclo.competencia] = ciclo
+            else:
+                for ciclo in sync_condo_cycle(db_session, [pix_doc], storage_dir=storage_dir):
+                    _atualizar_status_apos_conferencia(ciclo)
+                    db_session.flush()
+                    ciclos[ciclo.competencia] = ciclo
+        except Exception as exc:
+            logger.warning("Falha ao vincular comprovante %s: %s", pix_doc.filename, exc)
+            falhas.append({"arquivo": pix_doc.filename, "erro": str(exc)})
+            db_session.rollback()
+
+    db_session.commit()
+    return list(ciclos.values()), falhas

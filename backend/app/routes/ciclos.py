@@ -58,8 +58,6 @@ def build_checklist_response(ciclo: CicloCondominio) -> VerificacaoChecklistResp
     erros_alertas: list[str] = []
     if not boleto_encontrado:
         erros_alertas.append("Boleto de condominio nao localizado para esta competencia")
-    if not aluguel_encontrado:
-        erros_alertas.append("Boleto de aluguel Ibagy nao localizado para esta competencia")
     if not comprovante_encontrado:
         erros_alertas.append("Comprovante de pagamento PIX nao localizado para esta competencia")
 
@@ -197,26 +195,30 @@ def upload_documentos(
 ):
     """
     Manual retroactive document intake (condo bills, rental bills, PIX receipts).
-    Reuses the email-flow classifier and sync engine unchanged: same attachment
-    classification, same dedupe by competencia, same PIX pairing. Files classified
-    as UNKNOWN are reported and ignored. Optional competencia hint (YYYY-MM) is
-    carried into the pairing corpus so PIX receipts bind to the intended month
-    instead of the most recent pending cycle.
+    Retroactive conferencia semantics: the condo bill defines the cycle (its own
+    extracted competencia); the Ibagy rental bill of the following month is
+    conferencia evidence only (compare discount already applied vs audited
+    landlord amount) and is never submitted; PIX receipts pair with the batch
+    cycle. Files classified as UNKNOWN are reported and ignored. Optional
+    competencia hint (YYYY-MM) feeds the PIX corpus matching when the batch has
+    more than one cycle.
     """
     from app.services.email_worker import (
         DocumentType,
         EmailAttachment,
         IngestedDocument,
         classify_attachment,
-        sync_condo_cycle,
+        sync_retroativo_lote,
     )
 
     hint = ""
+    hint_competencia = None
     if competencia:
         comp = competencia.strip()
         parts = comp.split("-")
         if len(parts) == 2 and len(parts[0]) == 4:
             comp_slash = f"{parts[1]}/{parts[0]}"
+            hint_competencia = comp
         else:
             comp_slash = comp
         hint = f"upload manual competencia {comp} {comp_slash}"
@@ -258,37 +260,38 @@ def upload_documentos(
     falhas: list[dict] = []
     if docs:
         storage_dir = os.getenv("STORAGE_DIR", "/data/storage")
-        # Mirror the engine batch order (bills, rental bills, receipts) and sync
-        # ONE document per call: a document that fails to parse is reported in
-        # "falhas" without aborting the remaining files.
-        order = {
-            DocumentType.CONDO_BILL: 0,
-            DocumentType.RENTAL_BILL: 1,
-            DocumentType.PIX_RECEIPT: 2,
-        }
-        docs.sort(key=lambda d: order.get(d.doc_type, 3))
-        for doc in docs:
-            try:
-                ciclos = sync_condo_cycle(db, [doc], storage_dir=storage_dir)
-                for c in ciclos:
-                    status_value = (
-                        c.status_ciclo.value if hasattr(c.status_ciclo, "value") else str(c.status_ciclo)
-                    )
-                    existing = next(
-                        (x for x in ciclos_afetados if x["id"] == str(c.id)), None
-                    )
-                    if existing is None:
-                        ciclos_afetados.append({
-                            "id": str(c.id),
-                            "competencia": c.competencia,
-                            "status_ciclo": status_value,
-                        })
-                    else:
-                        existing["status_ciclo"] = status_value
-            except Exception as exc:
-                logger.warning("Falha ao processar documento %s: %s", doc.filename, exc)
-                falhas.append({"arquivo": doc.filename, "erro": str(exc)})
-                db.rollback()
+        ciclos, falhas_lote = sync_retroativo_lote(
+            db, docs, storage_dir=storage_dir, hint_competencia=hint_competencia
+        )
+        falhas.extend(falhas_lote)
+        for c in ciclos:
+            status_value = (
+                c.status_ciclo.value if hasattr(c.status_ciclo, "value") else str(c.status_ciclo)
+            )
+            desconto = c.valor_desconto_aluguel or Decimal("0.00")
+            diferenca = max(Decimal("0.00"), c.valor_ressarcimento - desconto)
+            if status_value == "CONCILIADO_SEM_PENDENCIA":
+                veredito = "TUDO_OK"
+            elif status_value == "PRONTO_PARA_ENVIO":
+                veredito = "SUGERIR_ENVIO"
+            else:
+                veredito = status_value
+            existing = next(
+                (x for x in ciclos_afetados if x["id"] == str(c.id)), None
+            )
+            entry = {
+                "id": str(c.id),
+                "competencia": c.competencia,
+                "status_ciclo": status_value,
+                "veredito": veredito,
+                "valor_ressarcimento": str(c.valor_ressarcimento),
+                "valor_desconto_aluguel": str(desconto),
+                "diferenca": str(diferenca),
+            }
+            if existing is None:
+                ciclos_afetados.append(entry)
+            else:
+                existing.update(entry)
 
     return {"arquivos": report, "ciclos_afetados": ciclos_afetados, "falhas": falhas}
 

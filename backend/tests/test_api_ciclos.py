@@ -306,8 +306,9 @@ def test_get_cycle_checklist_detail(client: TestClient, db_session: Session):
     assert data["boleto_aluguel_encontrado"] is False
     assert data["comprovante_pix_encontrado"] is False
     assert any("Boleto de condominio" in alert for alert in data["erros_alertas"])
-    assert any("Boleto de aluguel" in alert for alert in data["erros_alertas"])
     assert any("Comprovante de pagamento PIX" in alert for alert in data["erros_alertas"])
+    # Rental bill is conferencia evidence only (retroactive flow) and is no
+    # longer required for the monthly verification - it must not raise an alert.
 
 
 def test_submeter_ciclo_blocked_when_saldo_zero(client: TestClient, db_session: Session):

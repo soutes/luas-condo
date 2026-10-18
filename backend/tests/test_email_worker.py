@@ -547,12 +547,12 @@ def test_classify_ibagy_rental_bill():
     assert doc_type == DocumentType.RENTAL_BILL
 
 
-def test_sync_condo_cycle_with_rental_bill_reconciliation(db_session: Session, tmp_path: Path):
+def test_sync_condo_cycle_rental_bill_closes_submitted_cycle(db_session: Session, tmp_path: Path):
     """
-    Test cycle reconciliation when both condo bill and Ibagy rental bill are ingested.
-    Landlord expense: R$ 354,50.
-    Rental discounts: R$ 264,50.
-    Residual balance to submit: R$ 90,00.
+    Monthly flow: the Ibagy rental bill of competence M+1 carries the discount
+    applied to the previous month's condo bill. When the previous cycle was
+    already submitted (ENVIADO) and the discount covers the full claimed amount,
+    the cycle is closed as PROCESSADO_ALUGUEL.
     """
     storage_dir = str(tmp_path / "storage")
 
@@ -565,11 +565,11 @@ def test_sync_condo_cycle_with_rental_bill_reconciliation(db_session: Session, t
         valor_extraordinarias=Decimal("294.87"),
         valor_fundos=Decimal("59.63"),
         valor_leituras=Decimal("203.54"),
-        valor_ressarcimento=Decimal("354.50"),
-        valor_saldo_residual=Decimal("354.50"),
+        valor_ressarcimento=Decimal("264.50"),
+        valor_saldo_residual=Decimal("264.50"),
         boleto_pdf_path="/data/storage/condo.pdf",
-        comprovante_pix_path=None,
-        status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+        comprovante_pix_path="/data/storage/pix.pdf",
+        status_ciclo=StatusCiclo.ENVIADO,
     )
     db_session.add(ciclo)
     db_session.commit()
@@ -582,49 +582,34 @@ def test_sync_condo_cycle_with_rental_bill_reconciliation(db_session: Session, t
         "Rateio manutencao fachada.( 5/10) 208,29-\n"
         "(=) Valor do Documento R$ 2.741,14\n"
         "Referencia 09638.003.03\n"
-        "01/09/2026 a 30/09/2026\n"
-        "Vencimento 05/10/2026\n"
+        "01/10/2026 a 31/10/2026\n"
+        "Vencimento 05/11/2026\n"
     )
 
     rental_doc = IngestedDocument(
         doc_type=DocumentType.RENTAL_BILL,
-        filename="Boleto_Aluguel_2026_09.pdf",
+        filename="Boleto_Aluguel_2026_10.pdf",
         content=sample_rental_text.encode("utf-8"),
         content_type="application/pdf",
         email_uid=991,
         email_sender="boleto@ibagyimobiliaria.com.br",
-        email_subject="Boleto Aluguel 09/2026",
+        email_subject="Boleto Aluguel 10/2026",
     )
 
-    sync_condo_cycle(db_session, [rental_doc], storage_dir=storage_dir)
+    result = sync_condo_cycle(db_session, [rental_doc], storage_dir=storage_dir)
 
     c_refreshed = db_session.get(CicloCondominio, ciclo.id)
     assert c_refreshed.valor_desconto_aluguel == Decimal("264.50")
-    assert c_refreshed.valor_saldo_residual == Decimal("90.00")
-    assert c_refreshed.status_ciclo == StatusCiclo.PENDENTE_COMPROVANTE
+    assert c_refreshed.status_ciclo == StatusCiclo.PROCESSADO_ALUGUEL
+    assert "encerrado" in c_refreshed.detalhes_verificacao.lower()
     assert len(c_refreshed.itens_abatidos_aluguel) == 2
-
-    # Now PIX payment receipt arrives: cycle promotes to PRONTO_PARA_ENVIO with residual balance
-    pix_doc = IngestedDocument(
-        doc_type=DocumentType.PIX_RECEIPT,
-        filename="Comprovante_PIX.png",
-        content=b"\x89PNG\r\n\x1a\nfake image",
-        content_type="image/png",
-        email_uid=992,
-        email_sender="luizsoutes@gmail.com",
-        email_subject="Comprovante de pagamento PIX R$ 1.154,31",
-    )
-    sync_condo_cycle(db_session, [pix_doc], storage_dir=storage_dir)
-
-    c_final = db_session.get(CicloCondominio, ciclo.id)
-    assert c_final.status_ciclo == StatusCiclo.PRONTO_PARA_ENVIO
-    assert c_final.valor_saldo_residual == Decimal("90.00")
+    assert [c.competencia for c in result] == ["2026-09"]
 
 
-def test_sync_condo_cycle_rental_bill_full_reconciliation(db_session: Session, tmp_path: Path):
+def test_sync_condo_cycle_rental_bill_divergence_on_submitted_cycle(db_session: Session, tmp_path: Path):
     """
-    Test cycle reconciliation when rental discounts cover the entire landlord expense.
-    Status must become CONCILIADO_SEM_PENDENCIA and no submission is required.
+    Monthly flow: when the following-month rental discount comes SHORT of the
+    submitted amount, the cycle stays ENVIADO and the divergence is recorded.
     """
     storage_dir = str(tmp_path / "storage")
 
@@ -636,8 +621,59 @@ def test_sync_condo_cycle_rental_bill_full_reconciliation(db_session: Session, t
         valor_ressarcimento=Decimal("264.50"),
         valor_saldo_residual=Decimal("264.50"),
         boleto_pdf_path="/data/storage/condo_08.pdf",
-        comprovante_pix_path=None,
-        status_ciclo=StatusCiclo.PENDENTE_COMPROVANTE,
+        comprovante_pix_path="/data/storage/pix_08.pdf",
+        status_ciclo=StatusCiclo.ENVIADO,
+    )
+    db_session.add(ciclo)
+    db_session.commit()
+
+    sample_rental_text = (
+        "341-7 Recibo do Pagador\n"
+        "Beneficiario Ibagy Imoveis Ltda\n"
+        "Fundo de Reserva . 56,21-\n"
+        "(=) Valor do Documento R$ 2.741,14\n"
+        "Referencia 09638.003.03\n"
+        "01/09/2026 a 30/09/2026\n"
+        "Vencimento 05/10/2026\n"
+    )
+
+    rental_doc = IngestedDocument(
+        doc_type=DocumentType.RENTAL_BILL,
+        filename="Boleto_Aluguel_2026_09.pdf",
+        content=sample_rental_text.encode("utf-8"),
+        content_type="application/pdf",
+        email_uid=993,
+        email_sender="boleto@ibagyimobiliaria.com.br",
+        email_subject="Boleto Aluguel 09/2026",
+    )
+
+    sync_condo_cycle(db_session, [rental_doc], storage_dir=storage_dir)
+
+    c_refreshed = db_session.get(CicloCondominio, ciclo.id)
+    assert c_refreshed.valor_desconto_aluguel == Decimal("56.21")
+    assert c_refreshed.status_ciclo == StatusCiclo.ENVIADO
+    assert "divergencia" in c_refreshed.detalhes_verificacao.lower()
+    assert "208,29" in c_refreshed.detalhes_verificacao or "208.29" in c_refreshed.detalhes_verificacao
+
+
+def test_sync_condo_cycle_rental_bill_does_not_touch_pending_cycle(db_session: Session, tmp_path: Path):
+    """
+    Monthly verification ignores the rental bill comparison: a rental bill
+    arriving while the previous cycle is still pending must NOT reconcile it,
+    block it, or create a separate cycle.
+    """
+    storage_dir = str(tmp_path / "storage")
+
+    ciclo = CicloCondominio(
+        competencia="2026-09",
+        condominio_nome="CONDOMINIO EDIFICIO VILLA SALOMY",
+        data_vencimento=date(2026, 10, 10),
+        valor_total=Decimal("1154.31"),
+        valor_ressarcimento=Decimal("354.50"),
+        valor_saldo_residual=Decimal("354.50"),
+        boleto_pdf_path="/data/storage/condo.pdf",
+        comprovante_pix_path="/data/storage/pix.pdf",
+        status_ciclo=StatusCiclo.PRONTO_PARA_ENVIO,
     )
     db_session.add(ciclo)
     db_session.commit()
@@ -649,27 +685,62 @@ def test_sync_condo_cycle_rental_bill_full_reconciliation(db_session: Session, t
         "Rateio manutencao fachada.( 5/10) 208,29-\n"
         "(=) Valor do Documento R$ 2.741,14\n"
         "Referencia 09638.003.03\n"
-        "01/08/2026 a 31/08/2026\n"
-        "Vencimento 05/09/2026\n"
+        "01/10/2026 a 31/10/2026\n"
+        "Vencimento 05/11/2026\n"
     )
 
     rental_doc = IngestedDocument(
         doc_type=DocumentType.RENTAL_BILL,
-        filename="Boleto_Aluguel_2026_08.pdf",
+        filename="Boleto_Aluguel_2026_10.pdf",
         content=sample_rental_text.encode("utf-8"),
         content_type="application/pdf",
-        email_uid=993,
+        email_uid=994,
         email_sender="boleto@ibagyimobiliaria.com.br",
-        email_subject="Boleto Aluguel 08/2026",
+        email_subject="Boleto Aluguel 10/2026",
     )
 
     sync_condo_cycle(db_session, [rental_doc], storage_dir=storage_dir)
 
     c_refreshed = db_session.get(CicloCondominio, ciclo.id)
-    assert c_refreshed.valor_desconto_aluguel == Decimal("264.50")
-    assert c_refreshed.valor_saldo_residual == Decimal("0.00")
-    assert c_refreshed.status_ciclo == StatusCiclo.CONCILIADO_SEM_PENDENCIA
-    assert "conciliado sem pendencia" in c_refreshed.detalhes_verificacao.lower()
+    assert c_refreshed.status_ciclo == StatusCiclo.PRONTO_PARA_ENVIO
+    assert c_refreshed.valor_desconto_aluguel == Decimal("0.00")
+    assert c_refreshed.valor_saldo_residual == Decimal("354.50")
+    assert c_refreshed.boleto_aluguel_path is None
+    # No phantom cycle created for the rental bill's own competence
+    assert db_session.query(CicloCondominio).count() == 1
+
+
+def test_sync_condo_cycle_rental_bill_without_previous_cycle_creates_nothing(db_session: Session, tmp_path: Path):
+    """
+    Monthly flow: a rental bill with no previous-month cycle to verify must be
+    archived without creating any cycle (no more orphan aluguel-only cycles).
+    """
+    storage_dir = str(tmp_path / "storage")
+
+    sample_rental_text = (
+        "341-7 Recibo do Pagador\n"
+        "Beneficiario Ibagy Imoveis Ltda\n"
+        "Fundo de Reserva . 56,21-\n"
+        "(=) Valor do Documento R$ 2.741,14\n"
+        "Referencia 09638.003.03\n"
+        "01/10/2026 a 31/10/2026\n"
+        "Vencimento 05/11/2026\n"
+    )
+
+    rental_doc = IngestedDocument(
+        doc_type=DocumentType.RENTAL_BILL,
+        filename="Boleto_Aluguel_2026_10.pdf",
+        content=sample_rental_text.encode("utf-8"),
+        content_type="application/pdf",
+        email_uid=995,
+        email_sender="boleto@ibagyimobiliaria.com.br",
+        email_subject="Boleto Aluguel 10/2026",
+    )
+
+    result = sync_condo_cycle(db_session, [rental_doc], storage_dir=storage_dir)
+
+    assert result == []
+    assert db_session.query(CicloCondominio).count() == 0
 
 
 

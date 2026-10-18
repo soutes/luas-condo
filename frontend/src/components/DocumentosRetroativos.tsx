@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Upload, FileText, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Upload, FileText, CheckCircle, AlertCircle, Loader2, BadgeCheck, Send } from "lucide-react";
 
 export interface DocumentosRetroativosProps {
   onUploaded?: () => void;
@@ -15,6 +15,10 @@ interface CicloAfetado {
   id: string;
   competencia: string;
   status_ciclo: string;
+  veredito?: string;
+  valor_ressarcimento?: string;
+  valor_desconto_aluguel?: string;
+  diferenca?: string;
 }
 
 interface FalhaProcessamento {
@@ -27,6 +31,12 @@ interface UploadResultado {
   ciclos_afetados: CicloAfetado[];
   falhas?: FalhaProcessamento[];
 }
+
+const formatBRL = (val: string): string => {
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  return num.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+};
 
 const tipoLabel = (tipo: string): string => {
   switch (tipo) {
@@ -193,14 +203,49 @@ export const DocumentosRetroativos: React.FC<DocumentosRetroativosProps> = ({
           {resultado.ciclos_afetados.length > 0 && (
             <div className="text-xs text-slate-300 border-t border-slate-800 pt-2">
               <span className="font-bold uppercase tracking-wider text-slate-400">
-                Ciclos atualizados:
+                Conferencia retroativa:
               </span>
-              <ul className="mt-1 space-y-1">
-                {resultado.ciclos_afetados.map((c) => (
-                  <li key={c.id}>
-                    Competencia {c.competencia} - status {c.status_ciclo}
-                  </li>
-                ))}
+              <ul className="mt-1 space-y-2">
+                {resultado.ciclos_afetados.map((c) => {
+                  const tudoOk = c.veredito === "TUDO_OK";
+                  const sugereEnvio = c.veredito === "SUGERIR_ENVIO";
+                  return (
+                    <li key={c.id} className="border border-slate-800 bg-slate-950 p-2.5">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        {tudoOk ? (
+                          <BadgeCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                        ) : sugereEnvio ? (
+                          <Send className="w-4 h-4 text-[#f7941d] flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                        )}
+                        <span>Competencia {c.competencia}</span>
+                        <span
+                          className={
+                            tudoOk
+                              ? "text-emerald-400"
+                              : sugereEnvio
+                                ? "text-[#f7941d]"
+                                : "text-slate-400"
+                          }
+                        >
+                          {tudoOk
+                            ? "Tudo ok - nenhuma acao necessaria"
+                            : sugereEnvio
+                              ? `Sugestao: enviar pedido a Ibagy (diferenca ${formatBRL(c.diferenca || "0")})`
+                              : c.veredito || c.status_ciclo}
+                        </span>
+                      </div>
+                      {c.valor_ressarcimento !== undefined && (
+                        <p className="mt-1 text-slate-400">
+                          Locador apurado: {formatBRL(c.valor_ressarcimento)} | Desconto ja aplicado
+                          na fatura seguinte: {formatBRL(c.valor_desconto_aluguel || "0")} | Diferenca:{" "}
+                          {formatBRL(c.diferenca || "0")}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
               <p className="mt-2 text-slate-400">
                 Revise cada ciclo na aba Dashboard e envie mes a mes.
