@@ -1,3 +1,7 @@
+# Production compose. Loopback-only host bindings (public traffic goes through the
+# shared Caddy via the external `web` network; see docs/vm-port-allocation-runbook.md).
+# NOTE: in production the frontend serves nginx on internal port 80 (dev uses Vite on
+# 5173) - deploy/condo.caddy upstream port must match the mode being served.
 services:
   db:
     image: postgres:16-alpine
@@ -28,7 +32,7 @@ services:
     container_name: luas_condo_backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_IP:-127.0.0.1}:${BACKEND_HOST_PORT:-8000}:8000"
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
@@ -59,6 +63,7 @@ services:
           memory: 200M
     networks:
       - luas_condo_network
+      - web
 
   frontend:
     build:
@@ -67,13 +72,14 @@ services:
     container_name: luas_condo_frontend
     restart: unless-stopped
     ports:
-      - "3080:80"
+      - "${FRONTEND_HOST_IP:-127.0.0.1}:${FRONTEND_HOST_PORT:-3080}:80"
     deploy:
       resources:
         limits:
           memory: 32M
     networks:
       - luas_condo_network
+      - web
 
 volumes:
   luas_condo_pgdata:
@@ -81,3 +87,5 @@ volumes:
 networks:
   luas_condo_network:
     driver: bridge
+  web:
+    external: true
