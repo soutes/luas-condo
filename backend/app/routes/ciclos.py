@@ -5,6 +5,7 @@ No emojis used.
 """
 
 from datetime import date
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -36,6 +37,8 @@ from app.services.bitrix_submitter import (
 )
 
 router = APIRouter(prefix="/api/ciclos", tags=["ciclos"])
+
+logger = logging.getLogger(__name__)
 
 # Optional default client injection for in-memory integration testing
 _default_http_client: Optional[httpx.AsyncClient] = None
@@ -252,20 +255,42 @@ def upload_documentos(
             )
 
     ciclos_afetados: list[dict] = []
+    falhas: list[dict] = []
     if docs:
         storage_dir = os.getenv("STORAGE_DIR", "/data/storage")
-        ciclos = sync_condo_cycle(db, docs, storage_dir=storage_dir)
-        for c in ciclos:
-            status_value = (
-                c.status_ciclo.value if hasattr(c.status_ciclo, "value") else str(c.status_ciclo)
-            )
-            ciclos_afetados.append({
-                "id": str(c.id),
-                "competencia": c.competencia,
-                "status_ciclo": status_value,
-            })
+        # Mirror the engine batch order (bills, rental bills, receipts) and sync
+        # ONE document per call: a document that fails to parse is reported in
+        # "falhas" without aborting the remaining files.
+        order = {
+            DocumentType.CONDO_BILL: 0,
+            DocumentType.RENTAL_BILL: 1,
+            DocumentType.PIX_RECEIPT: 2,
+        }
+        docs.sort(key=lambda d: order.get(d.doc_type, 3))
+        for doc in docs:
+            try:
+                ciclos = sync_condo_cycle(db, [doc], storage_dir=storage_dir)
+                for c in ciclos:
+                    status_value = (
+                        c.status_ciclo.value if hasattr(c.status_ciclo, "value") else str(c.status_ciclo)
+                    )
+                    existing = next(
+                        (x for x in ciclos_afetados if x["id"] == str(c.id)), None
+                    )
+                    if existing is None:
+                        ciclos_afetados.append({
+                            "id": str(c.id),
+                            "competencia": c.competencia,
+                            "status_ciclo": status_value,
+                        })
+                    else:
+                        existing["status_ciclo"] = status_value
+            except Exception as exc:
+                logger.warning("Falha ao processar documento %s: %s", doc.filename, exc)
+                falhas.append({"arquivo": doc.filename, "erro": str(exc)})
+                db.rollback()
 
-    return {"arquivos": report, "ciclos_afetados": ciclos_afetados}
+    return {"arquivos": report, "ciclos_afetados": ciclos_afetados, "falhas": falhas}
 
 
 @router.post("/{ciclo_id}/submeter", response_model=CicloSubmissaoResponse)

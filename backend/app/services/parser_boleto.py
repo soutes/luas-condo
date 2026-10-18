@@ -96,7 +96,23 @@ def parse_condo_text(text: str) -> ParsedCondoBill:
         )
         data_vencimento = date(year, month, day)
     else:
-        raise ValueError("Unable to parse condo bill: data_vencimento not found")
+        # Syndkos v26 layout: the bank slip prints the label "Vencimento" at the
+        # end of a column header line and the date at the end of the next line
+        # (e.g. "... Beneficiario Vencimento\nCONDOMINIO ... 10/07/2026").
+        m_venc_boleto = re.search(
+            r"Vencimento[^\n]*\n[^\n]*?(\d{2})/(\d{2})/(\d{4})[ \t]*$",
+            text,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if m_venc_boleto:
+            day, month, year = (
+                int(m_venc_boleto.group(1)),
+                int(m_venc_boleto.group(2)),
+                int(m_venc_boleto.group(3)),
+            )
+            data_vencimento = date(year, month, day)
+        else:
+            raise ValueError("Unable to parse condo bill: data_vencimento not found")
 
     # 4. Total Amount
     m_total = re.search(
@@ -107,7 +123,26 @@ def parse_condo_text(text: str) -> ParsedCondoBill:
     if m_total:
         valor_total = _parse_decimal(m_total.group(1))
     else:
-        raise ValueError("Unable to parse condo bill: valor_total not found")
+        # Syndkos v26 layout: grand total inside the "Resumo de Rateio" block,
+        # printed as the first "Total:" line after the summary header.
+        m_resumo_total = re.search(
+            r"Resumo\s+de\s+Rateio[^\n]*\n(?:[^\n]*\n)*?Total:\s*([\d.,]+)",
+            text,
+            re.IGNORECASE,
+        )
+        if m_resumo_total:
+            valor_total = _parse_decimal(m_resumo_total.group(1))
+        else:
+            # Fallback: "Valor Documento" column value on the bank slip
+            m_doc_total = re.search(
+                r"Valor\s+Documento[^\n]*\n[^\n]*?([\d.,]+)[ \t]*$",
+                text,
+                re.IGNORECASE,
+            )
+            if m_doc_total:
+                valor_total = _parse_decimal(m_doc_total.group(1))
+            else:
+                raise ValueError("Unable to parse condo bill: valor_total not found")
 
     # 5. Barcode Line (Linha Digitavel)
     m_linha = re.search(
@@ -140,34 +175,77 @@ def parse_condo_text(text: str) -> ParsedCondoBill:
         "COMPETÊNCIA",
     ]
 
+    # Syndkos v26 real-world layout: section headers share the line with column
+    # labels ("Ordinarias Valor Unidade Total ..."), items print the unit value
+    # FIRST and the condo total second, and the "Resumo de Rateio" block carries
+    # the grand total. Everything after the summary is bank slip / envelope
+    # content and holds no rateio items.
+    unit_first_layout = bool(
+        re.search(r"Valor\s+Unidade\s+Total", text, re.IGNORECASE)
+        and re.search(r"Resumo\s+de\s+Rateio", text, re.IGNORECASE)
+    )
+
+    in_resumo = False
+    last_leitura_label: Optional[str] = None
+
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
 
+        # Rateio summary block: consume until the grand total line, then stop
+        # parsing items entirely (the rest is the bank slip section).
+        if in_resumo:
+            if re.match(r"^Recibo\s+do\s+Pagador\b", line, re.IGNORECASE):
+                break
+            m_grand = re.match(r"^Total:\s*([\d.,]+)", line)
+            if m_grand:
+                break
+            continue
+
         # Check section boundaries
-        if re.search(
-            r"^\s*(?:DESPESAS\s+)?EXTRAORDIN[AÁ]RIAS\s*$", line, re.IGNORECASE
-        ):
-            current_category = CategoriaItem.EXTRAORDINARIA
-            continue
-        if re.search(r"^\s*(?:DESPESAS\s+)?ORDIN[AÁ]RIAS\s*$", line, re.IGNORECASE):
-            current_category = CategoriaItem.ORDINARIA
-            continue
-        if re.search(
-            r"^\s*(?:LEITURAS|CONSUMO(?:\s+INDIVIDUAL)?)\s*$", line, re.IGNORECASE
-        ):
-            current_category = CategoriaItem.LEITURA
-            continue
-        if re.search(
-            r"^\s*FUNDOS\s*$", line, re.IGNORECASE
-        ) or re.search(
-            r"^\s*FUNDO\s+DE\s+RESERVA\s*$", line, re.IGNORECASE
-        ):
-            current_category = CategoriaItem.FUNDOS
-            continue
         if re.search(r"^\s*(?:RESUMO|TOTAL\s+GERAL)\b", line, re.IGNORECASE):
+            in_resumo = True
             current_category = None
+            continue
+
+        if unit_first_layout:
+            m_sec = re.match(r"^Ordin[áà]rias\b", line, re.IGNORECASE)
+            if m_sec:
+                current_category = CategoriaItem.ORDINARIA
+                continue
+            m_sec = re.match(r"^Extraordin[áà]rias\b", line, re.IGNORECASE)
+            if m_sec:
+                current_category = CategoriaItem.EXTRAORDINARIA
+                continue
+            m_sec = re.match(r"^Fundos\b", line, re.IGNORECASE)
+            if m_sec:
+                current_category = CategoriaItem.FUNDOS
+                continue
+            if re.match(r"^Anterior\s+Atual\s+Consumo", line, re.IGNORECASE):
+                current_category = CategoriaItem.LEITURA
+                continue
+        else:
+            if re.search(
+                r"^\s*(?:DESPESAS\s+)?EXTRAORDIN[AÁ]RIAS\s*$", line, re.IGNORECASE
+            ):
+                current_category = CategoriaItem.EXTRAORDINARIA
+                continue
+            if re.search(r"^\s*(?:DESPESAS\s+)?ORDIN[AÁ]RIAS\s*$", line, re.IGNORECASE):
+                current_category = CategoriaItem.ORDINARIA
+                continue
+            if re.search(
+                r"^\s*(?:LEITURAS|CONSUMO(?:\s+INDIVIDUAL)?)\s*$", line, re.IGNORECASE
+            ):
+                current_category = CategoriaItem.LEITURA
+                continue
+            if re.search(
+                r"^\s*FUNDOS\s*$", line, re.IGNORECASE
+            ) or re.search(
+                r"^\s*FUNDO\s+DE\s+RESERVA\s*$", line, re.IGNORECASE
+            ):
+                current_category = CategoriaItem.FUNDOS
+                continue
 
         # Check explicit subtotal / total lines
         m_sub = re.search(
@@ -188,7 +266,45 @@ def parse_condo_text(text: str) -> ParsedCondoBill:
                 category_subtotals[CategoriaItem.FUNDOS] = val
             continue
 
+        # Real-mode subtotal inside a section: "Total: 611,85 36.060,14"
+        # (unit subtotal first, grand total across units optional second)
+        if unit_first_layout:
+            m_real_sub = re.match(
+                r"^Total:\s*" + NUMBER_PATTERN + r"(?:\s+" + NUMBER_PATTERN + r")?\s*$",
+                line,
+            )
+            if m_real_sub and current_category is not None:
+                category_subtotals[current_category] = _parse_decimal(m_real_sub.group(1))
+                continue
+
         if current_category is None:
+            continue
+
+        if unit_first_layout and current_category == CategoriaItem.LEITURA:
+            # Consumption table (gas/water): the label line ("LEITURA DE GAS m3
+            # Data: ...") carries no parseable value and the value line is a bare
+            # number row whose month total is the LAST number on the line.
+            one_num = re.search(
+                r"^(.*?)\s+" + NUMBER_PATTERN + r"\s*$",
+                line,
+            )
+            if one_num:
+                desc = (last_leitura_label or one_num.group(1)).strip()
+                if any(kw in desc.upper() for kw in skip_keywords):
+                    continue
+                parsed_items.append(
+                    ParsedItemRateio(
+                        descricao=desc,
+                        valor_unidade=_parse_decimal(one_num.group(2)),
+                        valor_total_condominio=None,
+                        categoria=CategoriaItem.LEITURA,
+                    )
+                )
+                last_leitura_label = None
+            elif re.match(r"^Leitura\s+de\b", line, re.IGNORECASE):
+                last_leitura_label = re.sub(
+                    r"\s*Data:.*$", "", line, flags=re.IGNORECASE
+                ).strip()
             continue
 
         # Try matching two numbers at end of line (condo total + unit value)
@@ -200,8 +316,13 @@ def parse_condo_text(text: str) -> ParsedCondoBill:
             desc = two_nums.group(1).strip()
             if any(kw in desc.upper() for kw in skip_keywords):
                 continue
-            total_condo = _parse_decimal(two_nums.group(2))
-            unit_val = _parse_decimal(two_nums.group(3))
+            if unit_first_layout:
+                # Real layout: "Descricao <valor_unidade> <total_condominio>"
+                unit_val = _parse_decimal(two_nums.group(2))
+                total_condo = _parse_decimal(two_nums.group(3))
+            else:
+                total_condo = _parse_decimal(two_nums.group(2))
+                unit_val = _parse_decimal(two_nums.group(3))
             parsed_items.append(
                 ParsedItemRateio(
                     descricao=desc,

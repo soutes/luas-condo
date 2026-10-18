@@ -261,6 +261,28 @@ def classify_attachment(
 
     # 2. PDFs
     if is_pdf:
+        # Bank payment receipts (Santander/Unicred etc.) carry an explicit receipt
+        # title or payment-field signature; a condo demonstrativo never does.
+        # Check BEFORE condo keywords because a receipt names the beneficiary
+        # condo (e.g. "COND. EDIF. VILLA SALOMY") among its fields.
+        has_receipt_signature = (
+            "COMPROVANTE DE PAGAMENTO" in pdf_text_upper
+            or "COMPROVANTE DE TRANSFER" in pdf_text_upper
+            or (
+                ("VALOR PAGO" in pdf_text_upper or "DATA DO PAGAMENTO" in pdf_text_upper)
+                and "AUTENTICA" in pdf_text_upper
+            )
+        )
+        if has_receipt_signature and "DEMONSTRATIVO" not in pdf_text_upper:
+            return DocumentType.PIX_RECEIPT
+
+        if (
+            "COMPROVANTE" in attachment.filename.upper()
+            and "BOLETO" not in attachment.filename.upper()
+            and "DEMONSTRATIVO" not in attachment.filename.upper()
+        ):
+            return DocumentType.PIX_RECEIPT
+
         # Check explicit condo indicators inside PDF or in filename
         has_condo_in_pdf = any(kw in pdf_text_upper for kw in condo_keywords)
         has_condo_in_meta = any(kw in meta_text for kw in ["BOLETO", "DEMONSTRATIVO", "SYNDKOS", "VILLA SALOMY", "RATEIO"])

@@ -16,6 +16,7 @@ from app.core.database import SessionLocal
 from app.models.entities import CicloCondominio, StatusCiclo
 from app.services.bitrix_submitter import SubmissionPayload, submit_reimbursement
 from app.services.email_worker import (
+    DocumentType,
     fetch_new_condo_emails,
     sync_condo_cycle,
 )
@@ -97,8 +98,23 @@ async def execute_email_sync(
                 "submitted_cycles": [],
             }
 
-        # Synchronize into database cycles
-        cycles = sync_condo_cycle(db, docs, storage_dir=storage_dir)
+        # Synchronize into database cycles, ONE document per call (same order as
+        # the engine batch mode: bills, rental bills, receipts) so a single
+        # unparseable attachment is skipped without aborting the whole sync.
+        doc_order = {
+            DocumentType.CONDO_BILL: 0,
+            DocumentType.RENTAL_BILL: 1,
+            DocumentType.PIX_RECEIPT: 2,
+        }
+        cycles = []
+        for doc in sorted(docs, key=lambda d: doc_order.get(d.doc_type, 3)):
+            try:
+                cycles.extend(sync_condo_cycle(db, [doc], storage_dir=storage_dir))
+            except Exception as doc_exc:
+                logger.warning(
+                    f"Falha ao processar documento {doc.filename}: {doc_exc}"
+                )
+                db.rollback()
 
         # Check if auto-submit is enabled
         auto_submit = os.getenv("AUTO_SUBMIT", "false").lower() in ("true", "1", "yes")

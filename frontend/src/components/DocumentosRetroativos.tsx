@@ -17,9 +17,15 @@ interface CicloAfetado {
   status_ciclo: string;
 }
 
+interface FalhaProcessamento {
+  arquivo: string;
+  erro: string;
+}
+
 interface UploadResultado {
   arquivos: ArquivoResultado[];
   ciclos_afetados: CicloAfetado[];
+  falhas?: FalhaProcessamento[];
 }
 
 const tipoLabel = (tipo: string): string => {
@@ -170,6 +176,20 @@ export const DocumentosRetroativos: React.FC<DocumentosRetroativosProps> = ({
               </li>
             ))}
           </ul>
+          {resultado.falhas && resultado.falhas.length > 0 && (
+            <div className="text-xs border-t border-slate-800 pt-2">
+              <span className="font-bold uppercase tracking-wider text-red-300">
+                Nao processados:
+              </span>
+              <ul className="mt-1 space-y-1 text-slate-300">
+                {resultado.falhas.map((f) => (
+                  <li key={f.arquivo}>
+                    <span className="font-mono">{f.arquivo}</span> - {f.erro}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {resultado.ciclos_afetados.length > 0 && (
             <div className="text-xs text-slate-300 border-t border-slate-800 pt-2">
               <span className="font-bold uppercase tracking-wider text-slate-400">

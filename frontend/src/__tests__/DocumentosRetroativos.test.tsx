@@ -93,6 +93,46 @@ describe("Documentos Retroativos Upload", () => {
     });
   });
 
+  it("lists documents that failed to parse without hiding successful ones", async () => {
+    const fakePdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "boleto_quebrado.pdf", {
+      type: "application/pdf",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              arquivos: [
+                { arquivo: "boleto_quebrado.pdf", tipo: "CONDO_BILL", arquivado: true },
+              ],
+              ciclos_afetados: [],
+              falhas: [
+                {
+                  arquivo: "boleto_quebrado.pdf",
+                  erro: "Unable to parse condo bill: data_vencimento not found",
+                },
+              ],
+            }),
+        })
+      )
+    );
+
+    render(<DocumentosRetroativos />);
+
+    const input = screen.getByLabelText(/Arquivos/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [fakePdf] } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Enviar e Auditar/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Nao processados/i)).toBeInTheDocument();
+      expect(screen.getByText(/data_vencimento not found/i)).toBeInTheDocument();
+    });
+  });
+
   it("shows network error when upload fails", async () => {
     const fakePdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "boleto.pdf", {
       type: "application/pdf",
