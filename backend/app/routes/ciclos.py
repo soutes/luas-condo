@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 import httpx
 from decimal import Decimal
 from sqlalchemy import desc
@@ -184,6 +184,88 @@ def seed_demo_cycle(db: Session = Depends(get_db)) -> CicloCondominioResponse:
     )
     db.refresh(ciclo)
     return ciclo
+
+
+@router.post("/documentos")
+def upload_documentos(
+    files: list[UploadFile] = File(...),
+    competencia: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Manual retroactive document intake (condo bills, rental bills, PIX receipts).
+    Reuses the email-flow classifier and sync engine unchanged: same attachment
+    classification, same dedupe by competencia, same PIX pairing. Files classified
+    as UNKNOWN are reported and ignored. Optional competencia hint (YYYY-MM) is
+    carried into the pairing corpus so PIX receipts bind to the intended month
+    instead of the most recent pending cycle.
+    """
+    from app.services.email_worker import (
+        DocumentType,
+        EmailAttachment,
+        IngestedDocument,
+        classify_attachment,
+        sync_condo_cycle,
+    )
+
+    hint = ""
+    if competencia:
+        comp = competencia.strip()
+        parts = comp.split("-")
+        if len(parts) == 2 and len(parts[0]) == 4:
+            comp_slash = f"{parts[1]}/{parts[0]}"
+        else:
+            comp_slash = comp
+        hint = f"upload manual competencia {comp} {comp_slash}"
+
+    max_files = 30
+    max_file_bytes = 20 * 1024 * 1024
+
+    docs: list[IngestedDocument] = []
+    report: list[dict] = []
+    for upload in files[:max_files]:
+        content = upload.file.read()
+        if len(content) > max_file_bytes:
+            report.append({
+                "arquivo": upload.filename,
+                "tipo": "MUITO_GRANDE",
+                "arquivado": False,
+            })
+            continue
+        attachment = EmailAttachment(
+            upload.filename or "documento",
+            upload.content_type or "application/octet-stream",
+            content,
+        )
+        doc_type = classify_attachment(attachment)
+        archived = doc_type != DocumentType.UNKNOWN
+        report.append({"arquivo": upload.filename, "tipo": doc_type.value, "arquivado": archived})
+        if archived:
+            docs.append(
+                IngestedDocument(
+                    doc_type=doc_type,
+                    filename=upload.filename or "documento",
+                    content=content,
+                    content_type=upload.content_type or "application/octet-stream",
+                    email_subject=hint,
+                )
+            )
+
+    ciclos_afetados: list[dict] = []
+    if docs:
+        storage_dir = os.getenv("STORAGE_DIR", "/data/storage")
+        ciclos = sync_condo_cycle(db, docs, storage_dir=storage_dir)
+        for c in ciclos:
+            status_value = (
+                c.status_ciclo.value if hasattr(c.status_ciclo, "value") else str(c.status_ciclo)
+            )
+            ciclos_afetados.append({
+                "id": str(c.id),
+                "competencia": c.competencia,
+                "status_ciclo": status_value,
+            })
+
+    return {"arquivos": report, "ciclos_afetados": ciclos_afetados}
 
 
 @router.post("/{ciclo_id}/submeter", response_model=CicloSubmissaoResponse)

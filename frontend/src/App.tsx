@@ -3,6 +3,7 @@ import type { Ciclo } from "./types";
 import { CycleCard } from "./components/CycleCard";
 import { AuditTable } from "./components/AuditTable";
 import { SubmissionPreview } from "./components/SubmissionPreview";
+import { DocumentosRetroativos } from "./components/DocumentosRetroativos";
 import { formatBRL } from "./utils";
 import {
   Building2,
@@ -77,6 +78,7 @@ export const App: React.FC = () => {
   const [sampleOffline, setSampleOffline] = useState<boolean>(false);
   const [seeding, setSeeding] = useState<boolean>(false);
   const [seedMessage, setSeedMessage] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"dashboard" | "documentos">("dashboard");
 
   const handleSyncEmail = async () => {
     setSyncingEmail(true);
@@ -285,6 +287,36 @@ export const App: React.FC = () => {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+        {/* Tab Bar */}
+        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab("dashboard")}
+            className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-none border transition-colors ${
+              activeTab === "dashboard"
+                ? "bg-[#f7941d]/15 text-[#f7941d] border-[#f7941d]/40"
+                : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"
+            }`}
+          >
+            Dashboard
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("documentos")}
+            className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-none border transition-colors ${
+              activeTab === "documentos"
+                ? "bg-[#f7941d]/15 text-[#f7941d] border-[#f7941d]/40"
+                : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"
+            }`}
+          >
+            Documentos
+          </button>
+        </div>
+
+        {activeTab === "documentos" && <DocumentosRetroativos onUploaded={fetchCiclos} />}
+
+        {activeTab === "dashboard" && (
+          <>
         {syncMessage && (
           <div className="p-3 bg-slate-900 border border-slate-700 text-xs flex items-center justify-between text-slate-200">
             <span>{syncMessage}</span>
@@ -464,6 +496,8 @@ export const App: React.FC = () => {
         )}
           </>
         )}
+            </>
+          )}
       </main>
 
       {/* Footer */}

@@ -150,6 +150,34 @@ describe("App Dashboard Integration", () => {
     });
   });
 
+  it("switches to the Documentos tab and back to the Dashboard", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/ciclos") {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([REAL_API_CICLO]),
+          });
+        }
+        return Promise.reject(new Error("Unknown route"));
+      })
+    );
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: /Luas Condo/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Documentos$/i }));
+    expect(await screen.findByText(/Documentos retroativos/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Aprovar e Enviar para Ibagy/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Dashboard$/i }));
+    expect(
+      await screen.findByRole("button", { name: /Aprovar e Enviar para Ibagy/i })
+    ).toBeInTheDocument();
+  });
+
   it("disables submission and flags sample data when API is unreachable", async () => {
     vi.stubGlobal(
       "fetch",
