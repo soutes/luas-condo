@@ -6,7 +6,7 @@ No emojis used.
 """
 
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import logging
 import os
 from typing import Any, Optional
