@@ -41,6 +41,11 @@ services:
       MOCK_SUBMISSION: ${MOCK_SUBMISSION:-true}
       CONDO_PDF_PASSWORD: ${CONDO_PDF_PASSWORD:-04293}
       SYNDKOS_EMAIL_SENDER: ${SYNDKOS_EMAIL_SENDER:-naoresponda@syndkos.com.br}
+      IMAP_SERVER: ${IMAP_SERVER:-imap.gmail.com}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-}
+      IMAP_READ_ONLY: ${IMAP_READ_ONLY:-true}
     depends_on:
       db:
         condition: service_healthy
