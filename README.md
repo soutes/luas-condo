@@ -96,9 +96,9 @@ Once initialized, the services are available at:
 
 ---
 
-## 3.1 Guia Pratico Passo a Passo: Do Download ao Uso (Manual para Advogados)
+## 3.1 Guia Pratico Passo a Passo: Do Download ao Uso
 
-Este guia foi explica com clareza como instalar, configurar e operar a plataforma de auditoria condominial tanto no **Windows** quanto no **Linux**.
+Este guia explica com clareza como qualquer usuario pode instalar, configurar e operar a plataforma de auditoria condominial tanto no **Windows** quanto no **Linux**.
 
 ### Contexto Juridico e Fundamentacao Legal (Lei Federal nº 8.245/1991)
 
@@ -317,7 +317,7 @@ Esta funcionalidade foi criada especificamente para auditar o historico retroati
 
 ---
 
-### Perguntas Frequentes (FAQ) para o Advogado
+### Perguntas Frequentes (FAQ)
 
 - **Onde encontro o numero do meu contrato e a senha do boleto?**
   - **Numero do Contrato (`CONTRATO_PADRAO`)**: Cada usuario DEVE colocar o seu proprio numero de contrato com a Ibagy, localizado no cabecalho do seu contrato de locacao e nas faturas/e-mails mensais de cobranca do aluguel.
