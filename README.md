@@ -98,7 +98,7 @@ Once initialized, the services are available at:
 
 ## 3.1 Guia Pratico Passo a Passo: Do Download ao Uso (Manual para Advogados)
 
-Este guia foi elaborado especialmente para advogados e profissionais do Direito que nao possuem formacao tecnica em computacao, explicando com clareza como instalar, configurar e operar a plataforma de auditoria condominial tanto no **Windows** quanto no **Linux**.
+Este guia foi explica com clareza como instalar, configurar e operar a plataforma de auditoria condominial tanto no **Windows** quanto no **Linux**.
 
 ### Contexto Juridico e Fundamentacao Legal (Lei Federal nº 8.245/1991)
 
