@@ -163,11 +163,17 @@ Na raiz da pasta do projeto, ha um arquivo de exemplo com o nome `.env.example`.
    IMAP_PASSWORD=abcdefghijklmnop
    IMAP_READ_ONLY=true
 
-   # Senha do arquivo PDF do condominio (se houver protecao por senha)
-   # Exemplo: administradoras costumam proteger o boleto com os primeiros digitos do CPF
+   # Senha de abertura do arquivo PDF do boleto (conforme e-mail mensal da Ibagy/administradora)
+   # ATENCAO: "04293" e a senha pessoal do autor para abrir os boletos do seu imovel.
+   # Cada usuario DEVE colocar a SUA PROPRIA senha de abertura do PDF, conforme indicado
+   # pela administradora ou pela Ibagy no e-mail mensal do boleto (geralmente os primeiros
+   # digitos do CPF do titular ou data de nascimento).
    CONDO_PDF_PASSWORD=04293
 
-   # Identificacao da locacao e imobiliaria
+   # Identificacao do seu contrato de locacao com a imobiliaria
+   # ATENCAO: "09638.003.03" e o numero de contrato de locacao do autor deste projeto.
+   # Cada usuario DEVE substituir pelo SEU PROPRIO numero de contrato com a Ibagy,
+   # que consta no cabecalho do contrato de locacao e nas faturas/e-mails mensais.
    CONTRATO_PADRAO=09638.003.03
    MOCK_SUBMISSION=true
    ```
@@ -315,6 +321,9 @@ Esta funcionalidade foi criada especificamente para auditar o historico retroati
 
 ### Perguntas Frequentes (FAQ) para o Advogado
 
+- **Onde encontro o numero do meu contrato e a senha do boleto?**
+  - **Numero do Contrato (`CONTRATO_PADRAO`)**: O valor `09638.003.03` informado nos exemplos e o numero do contrato de locacao do autor deste projeto. Cada usuario DEVE colocar o seu proprio numero de contrato com a Ibagy, localizado no cabecalho do seu contrato de locacao e nos e-mails mensais de cobranca do aluguel.
+  - **Senha do Boleto (`CONDO_PDF_PASSWORD`)**: O valor `04293` e a senha pessoal do autor para abrir os boletos do seu imovel. Cada usuario precisa colocar a SUA PROPRIA senha de abertura do boleto PDF, conforme indicado expressamente pela Ibagy ou pela administradora no e-mail mensal de envio do boleto (geralmente os primeiros digitos do CPF do titular da locacao ou sua data de nascimento).
 - **Minhas senhas e dados bancarios estao protegidos?**
   Sim. Todo o processamento ocorre no seu proprio computador ou servidor privado. O sistema foi desenvolvido em estrita conformidade com a LGPD (Lei Geral de Protecao de Dados - Lei nº 13.709/2018), sanitizando dados pessoais e nao transmitindo credenciais a terceiros.
 - **E se meu boleto de condominio tiver uma senha diferente?**
@@ -405,7 +414,9 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
 > [!NOTE]
-> **Password-Protected Bills**: Incoming condo bills encrypted with tenant credentials (e.g., `CONDO_PDF_PASSWORD=04293`) are automatically decrypted in memory during ingestion, parsed deterministically, and stored in decrypted format to ensure property manager reviewers can open attachments seamlessly without authentication barriers.
+> **Password-Protected Bills & Contract Credentials**:
+> - `CONDO_PDF_PASSWORD`: Incoming condo bills encrypted with tenant credentials are automatically decrypted in memory during ingestion, parsed deterministically, and stored in decrypted format to ensure property manager reviewers can open attachments seamlessly without authentication barriers. Note that `04293` is the author's reference password; each user must configure their own bill PDF password as instructed by Ibagy or their condominium administration in the monthly bill email (usually the first digits of the CPF).
+> - `CONTRATO_PADRAO`: Contract identifier `09638.003.03` is the author's lease contract. Each user must replace it with their own lease contract number provided by Ibagy in their rental agreement and monthly billing statements.
 >
 > **Syndkos Inbound Pattern**: Condominium bills arrive from sender `naoresponda@syndkos.com.br` with subject pattern `Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, Segue em anexo seu boleto com vencimento em {vencimento} referente a {competencia}`. The IMAP worker uses this pattern to extract due dates and competence (`YYYY-MM`) directly for fast-path classification and cross-validation against the PDF demonstrativo.
 
