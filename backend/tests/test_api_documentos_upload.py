@@ -140,15 +140,14 @@ def test_upload_pix_receipt_is_classified_and_hinted(client, monkeypatch):
     assert "07/2026" in captured["docs"][0].email_subject
 
 
-def test_upload_multiple_files_single_sync_call(client, monkeypatch):
-    """All valid files go to ONE sync_condo_cycle call. The engine itself orders
-    bills before receipts when pairing (sync_condo_cycle separates docs by type),
-    so the route only needs to deliver the full batch at once."""
-    captured = {"docs": None, "calls": 0}
+def test_upload_multiple_files_sync_per_doc_ordered(client, monkeypatch):
+    """Each valid file gets its own sync_condo_cycle call, ordered bills before
+    receipts (mirroring the engine batch order), so receipt pairing sees cycles
+    committed by previous calls."""
+    calls = []
 
     def fake_sync(db_session_arg, docs, storage_dir="/data/storage"):
-        captured["docs"] = docs
-        captured["calls"] += 1
+        calls.append([d.doc_type for d in docs])
         return []
 
     monkeypatch.setattr(
@@ -172,9 +171,44 @@ def test_upload_multiple_files_single_sync_call(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert captured["calls"] == 1
-    doc_types = {d.doc_type for d in captured["docs"]}
-    assert doc_types == {email_worker.DocumentType.CONDO_BILL, email_worker.DocumentType.PIX_RECEIPT}
+    assert len(calls) == 2
+    assert calls[0] == [email_worker.DocumentType.CONDO_BILL]
+    assert calls[1] == [email_worker.DocumentType.PIX_RECEIPT]
+
+
+def test_upload_failing_document_is_reported_and_batch_continues(client, monkeypatch):
+    """A document that fails to parse is reported in 'falhas' and the remaining
+    files are still processed (no more 500 killing the whole upload)."""
+    attempted = []
+
+    def fake_sync(db_session_arg, docs, storage_dir="/data/storage"):
+        attempted.append(docs[0].filename)
+        if "quebrado" in docs[0].filename:
+            raise ValueError("Unable to parse condo bill: data_vencimento not found")
+        return []
+
+    monkeypatch.setattr(
+        email_worker,
+        "classify_attachment",
+        lambda att, **kw: email_worker.DocumentType.CONDO_BILL,
+    )
+    monkeypatch.setattr(email_worker, "sync_condo_cycle", fake_sync)
+
+    response = client.post(
+        "/api/ciclos/documentos",
+        files=[
+            ("files", ("boleto_quebrado.pdf", b"%PDF-1.4 bad", "application/pdf")),
+            ("files", ("boleto_bom.pdf", b"%PDF-1.4 good", "application/pdf")),
+        ],
+        data={"competencia": "2026-07"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["falhas"]) == 1
+    assert body["falhas"][0]["arquivo"] == "boleto_quebrado.pdf"
+    assert "data_vencimento" in body["falhas"][0]["erro"]
+    assert attempted == ["boleto_quebrado.pdf", "boleto_bom.pdf"]
 
 
 def test_upload_unknown_file_reported_and_ignored(client, monkeypatch):

@@ -96,6 +96,234 @@ Once initialized, the services are available at:
 
 ---
 
+## 3.1 Guia Pratico Passo a Passo: Do Download ao Uso (Manual para Advogados)
+
+Este guia foi elaborado especialmente para advogados e profissionais do Direito que nao possuem formacao tecnica em computacao, explicando com clareza como instalar, configurar e operar a plataforma de auditoria condominial tanto no **Windows** quanto no **Linux**.
+
+### Contexto Juridico e Fundamentacao Legal (Lei Federal nº 8.245/1991)
+
+No Direito Imobiliario brasileiro, as locacoes urbanas sao regidas pela **Lei do Inquilinato (Lei nº 8.245/1991)**, que estabelece uma divisao estrita de responsabilidades financeiras entre proprietario e inquilino:
+
+1. **Artigo 23 (Obrigacoes do Locatario / Inquilino)**:
+   O locatario e responsavel estritamente pelas **despesas ordinarias** de condominio, necessarias a administracao e manutencao rotineira do edificio.
+   - Exemplos: salarios e encargos de porteiros e zeladores, consumo de agua e energia eletrica das areas comuns, limpeza, manutencao preventiva de portoes e elevadores.
+
+2. **Artigo 22, Inciso X (Obrigacoes do Locador / Proprietario)**:
+   O locador (proprietario do imovel) responde integralmente pelas **despesas extraordinarias** de condominio, que agregam valor ou integram a estrutura permanente do patrimonio.
+   - Exemplos: constituicao de fundo de reserva e fundo de obras, pintura de fachadas, reformas estruturais, instalacao de equipamentos de seguranca contra incendio, pericias e assessoria de engenharia predial.
+
+**O Problema Pratico do Boleto Unico**:
+As administradoras de condominio (como a SCI Syndkos, no Edificio Villa Salomy) emitem uma cobranca unificada (boleto unico) em nome da unidade residencial. Como o inquilino reside no imovel, ele e obrigado a quitar a totalidade do boleto para evitar cobrancas judiciais, juros moratorios e negativacao. Apos o pagamento, assiste ao locatario o direito subjetivo de pleitear o ressarcimento das despesas extraordinarias perante a imobiliaria administradora da locacao (Ibagy Imoveis).
+
+**Como o Luas Condo atua**:
+O sistema le o demonstrativo de rateio, separa linha por linha com base nos artigos 22 e 23, calcula o valor exato a ser reembolsado (por exemplo, a referencia historica de R$ 354,50), redige a minuta formal com fundamentacao juridica e transmite o pedido com protocolo formal.
+
+---
+
+### Etapa 1: Preparacao da Conta de E-mail e Senha de Aplicativo no Gmail
+
+O Luas Condo possui um agente que consulta sua caixa de e-mail de maneira automatica e segura via protocolo IMAP em modo somente-leitura (o sistema jamais exclui ou altera suas mensagens). Para isso, voce precisa fornecer uma credencial de acesso.
+
+> [!IMPORTANT]
+> **Por questoes de seguranca do Google, NUNCA utilize sua senha pessoal comum do Gmail**.
+> Voce deve gerar uma **Senha de Aplicativo (App Password)** de 16 letras, exclusiva para o sistema.
+
+#### Passo a Passo para Gerar a Senha no Google:
+1. Abra seu navegador e acesse a central de controle da sua Conta Google:
+   [https://myaccount.google.com/](https://myaccount.google.com/)
+2. No menu lateral esquerdo, clique em **Seguranca** (Security).
+3. Na secao "Como voce faz login no Google", verifique se a **Verificacao em duas etapas** (2-Step Verification) esta **Ativada**.
+   - Se ainda nao estiver ativada, clique sobre ela e siga os passos do Google para registrar seu telefone celular. O Google exige a verificacao em duas etapas antes de autorizar senhas de aplicativo.
+4. Com a verificacao em duas etapas ativada, busque pelo termo **Senhas de app** na barra de pesquisa superior da Conta Google (ou acesse diretamente pelo link: [https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)).
+5. Na tela "Senhas de app", no campo "Nome do app", digite: `Luas Condo` e clique no botao **Criar** (Create).
+6. O Google exibira uma janela contendo uma senha especial de **16 caracteres** dividida em blocos de quatro letras (exemplo ficticio: `abcd efgh ijkl mnop`).
+7. Selecione e copie essas 16 letras. Guarde-as em um arquivo de texto temporario para utilizar na etapa seguinte.
+
+---
+
+### Etapa 2: Onde Colocar as Credenciais (Configuracao do Arquivo `.env`)
+
+Na raiz da pasta do projeto, ha um arquivo de exemplo com o nome `.env.example`.
+
+1. **Crie a sua copia do arquivo**:
+   - **No Windows**: Clique com o botao direito em `.env.example`, selecione "Copiar", depois clique com o botao direito em uma area vazia e selecione "Colar". Clique com o botao direito no novo arquivo gerado, selecione "Renomear" e defina o nome exatamente como `.env` (iniciando com um ponto).
+   - **No Linux**: Abra o terminal na pasta do projeto e execute:
+     ```bash
+     cp .env.example .env
+     ```
+2. **Abra o arquivo `.env` para edicao**:
+   - No Windows: Abra com o **Bloco de Notas** (Notepad).
+   - No Linux: Execute `nano .env`.
+3. **Preencha as linhas correspondentes**:
+   ```env
+   # Credenciais do Gmail
+   IMAP_SERVER=imap.gmail.com
+   IMAP_PORT=993
+   IMAP_USER=seu_email@gmail.com
+   IMAP_PASSWORD=abcdefghijklmnop
+   IMAP_READ_ONLY=true
+
+   # Senha do arquivo PDF do condominio (se houver protecao por senha)
+   # Exemplo: administradoras costumam proteger o boleto com os primeiros digitos do CPF
+   CONDO_PDF_PASSWORD=04293
+
+   # Identificacao da locacao e imobiliaria
+   CONTRATO_PADRAO=09638.003.03
+   MOCK_SUBMISSION=true
+   ```
+
+> [!TIP]
+> **Modo de Simulacao (`MOCK_SUBMISSION=true`)**:
+> Mantenha este parametro ativado durante seus testes iniciais. O sistema executa toda a auditoria, gera os documentos e simula a comunicacao com o portal da imobiliaria com emissao de protocolo sem fazer o envio real. Para envios reais a Ibagy, basta alterar para `MOCK_SUBMISSION=false`.
+
+---
+
+### Etapa 3: Como Baixar e Usar no WINDOWS
+
+Existem duas formas de rodar o sistema no Windows. A opcao recomendada e via **Docker Desktop**, pois ela instala e configura o banco de dados e todos os servicos com um unico comando.
+
+#### Opcao A: Execucao Recomendada com Docker Desktop
+
+1. **Instale o Docker Desktop**:
+   - Acesse o site oficial: [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
+   - Baixe o instalador para Windows, execute a instalacao (aceitando as configuracoes padroes) e reinicie o computador se solicitado.
+   - Abra o Docker Desktop pelo menu Iniciar e aguarde ate que o icone no canto inferior esquerdo fique verde com a indicacao "Engine running".
+2. **Baixe o Codigo do Sistema**:
+   - No repositorio GitHub ([https://github.com/soutes/luas-condo](https://github.com/soutes/luas-condo)), clique no botao verde **Code** e depois em **Download ZIP**.
+   - Extraia a pasta compactada para uma pasta de facil acesso, como `C:\luas-condo` ou dentro de sua pasta `Documentos`.
+3. **Configure o Arquivo `.env`**:
+   - Na pasta onde extraiu os arquivos, crie o arquivo `.env` com seu e-mail e a senha de 16 caracteres conforme explicado na Etapa 2.
+4. **Inicie o Sistema**:
+   - Abra a pasta do projeto no Explorador de Arquivos do Windows.
+   - Clique na barra de endereco da pasta (onde aparece o caminho dos arquivos), digite `cmd` ou `powershell` e aperte Enter.
+   - Na janela preta que se abrir, crie a rede interna executando:
+     ```cmd
+     docker network create web
+     ```
+     *(Se uma mensagem avisar que a rede ja existe, apenas continue).*
+   - Agora, execute o comando que baixa e inicializa os modulos:
+     ```cmd
+     docker compose up -d
+     ```
+   - Aguarde o download das imagens e a criacao dos containers.
+5. **Acesse a Plataforma**:
+   - Abra seu navegador de internet (Google Chrome, Microsoft Edge, etc.) e digite o endereco:
+     ```
+     http://localhost:5173
+     ```
+   - A interface do Luas Condo abrira imediatamente.
+6. **Como Desligar o Sistema**:
+   - Quando terminar de utilizar, basta voltar a janela de comando e digitar:
+     ```cmd
+     docker compose down
+     ```
+
+#### Opcao B: Execucao Manual Direta no Windows (Sem Docker)
+
+Se preferir rodar diretamente no Windows sem o Docker Desktop:
+1. Instale o **Python 3.11** ou superior do site [python.org](https://www.python.org/) (marque a opcao "Add python.exe to PATH" durante a instalacao).
+2. Instale o **Node.js 18** ou superior do site [nodejs.org](https://nodejs.org/).
+3. Abra um terminal na pasta `backend`, instale as dependencias e inicie a API:
+   ```cmd
+   cd backend
+   pip install poetry
+   poetry install
+   poetry run uvicorn app.main:app --port 8000
+   ```
+4. Abra um segundo terminal na pasta `frontend`, instale as dependencias e inicie o painel visual:
+   ```cmd
+   cd frontend
+   npm install
+   npm run dev
+   ```
+5. Abra o navegador em `http://localhost:5173`.
+
+---
+
+### Etapa 4: Como Baixar e Usar no LINUX (Servidor ou Desktop)
+
+Para servidores Ubuntu/Debian ou estacoes de trabalho Linux:
+
+1. **Instalacao das Ferramentas Basicas**:
+   ```bash
+   sudo apt update
+   sudo apt install -y git docker.io docker-compose-v2
+   sudo systemctl enable --now docker
+   sudo usermod -aG docker $USER
+   # Reabra a sessao do terminal ou utilize: newgrp docker
+   ```
+
+2. **Clonar o Repositorio e Entrar na Pasta**:
+   ```bash
+   git clone https://github.com/soutes/luas-condo.git
+   cd luas-condo
+   ```
+
+3. **Criar e Ajustar as Variaveis de Ambiente**:
+   ```bash
+   cp .env.example .env
+   nano .env
+   ```
+   *(Insira suas credenciais do Gmail geradas na Etapa 1 e pressione Ctrl+O, Enter e Ctrl+X para salvar).*
+
+4. **Subir os Servicos no Docker**:
+   ```bash
+   docker network create web 2>/dev/null || true
+   docker compose up -d --build
+   ```
+
+5. **Acessar a Aplicacao**:
+   - Se estiver no Linux Desktop: acesse `http://localhost:5173` no navegador.
+   - Se estiver em uma maquina remota (VPS / Oracle Cloud): acesse `http://SEU_IP_DO_SERVIDOR:5173` ou configure o proxy Caddy/Nginx com seu dominio.
+
+---
+
+### Etapa 5: Como Usar o Sistema no Dia a Dia (Rotina Pratica)
+
+A interface do Luas Condo possui duas abas principais de navegacao na parte superior da tela:
+
+#### 1. Aba "Dashboard" - Rotina Mensal de Auditoria e Envio
+Esta e a tela utilizada no dia a dia para processar o mes atual:
+- **Botao "Sincronizar E-mail"**: Ao clicar neste botao no canto superior direito, o sistema acessa o seu Gmail de forma segura, baixa o boleto de condominio do mes e o comprovante bancario PIX.
+- **Seletor de Competencia**: Selecione o mes de referencia (ex: `2026-09` ou `2026-10`).
+- **Tabela de Auditoria**:
+  - Clique na aba **"Despesas do Locatario"** para ver as despesas ordinarias de sua responsabilidade (Art. 23).
+  - Clique na aba **"Despesas do Locador"** para visualizar os valores que pertencem ao proprietario (Art. 22), cada um acompanhado da sua fundamentacao legal especifica (Fundo de Reserva, Seguro Incendio, Obras, etc.).
+  - Observe o **Valor de Ressarcimento Apurado** calculado com precisao matematica (ex: R$ 354,50).
+- **Minuta Juridica de Contestacao**:
+  - No painel a direita, o sistema apresenta a peticao/notificacao pre-redigida citando os artigos pertinentes da Lei nº 8.245/1991 e vinculando os arquivos validados (boleto original descriptografado e comprovante de pagamento).
+- **Botao "Aprovar e Enviar para Ibagy"**:
+  - Ao clicar, o sistema transmite o pacote para o portal da imobiliaria e exibe na tela o numero de protocolo oficial para seu arquivamento e controle.
+
+#### 2. Aba "Documentos Retroativos" - Conferencia de Meses Anteriores
+Esta funcionalidade foi criada especificamente para auditar o historico retroativo de meses passados:
+- **Finalidade**: Descobrir se a imobiliaria ja realizou o desconto correto no boleto de aluguel do mes seguinte ou se ainda ha valores a serem cobrados.
+- **Como Utilizar**:
+  1. Clique na aba **"Documentos"** no topo da tela.
+  2. No campo **Competencia (opcional)**, digite o mes que deseja auditar no formato `AAAA-MM` (exemplo: `2026-07`).
+  3. No botao **Escolher Arquivos**, selecione conjuntamente os documentos pertinentes:
+     - O boleto do condominio do mes (PDF).
+     - O comprovante bancario ou PIX de pagamento desse boleto (PDF ou imagem PNG/JPG).
+     - A fatura de aluguel emitida pela Ibagy referente ao mes subsequente (PDF).
+  4. Clique no botao laranja **"Enviar e Auditar"**.
+  5. O sistema analisa os documentos com tolerancia a falhas (caso um arquivo esteja corrompido, os demais continuam sendo auditados sem interrupcao).
+- **Interpretacao dos Vereditos**:
+  - **Veredito "TUDO OK" (Conciliado sem Pendencia)**: Significa que a fatura de aluguel do mes seguinte ja concedeu o desconto integral correspondente as despesas extraordinarias apuradas. Nenhuma acao e necessaria.
+  - **Veredito "SUGERIR ENVIO"**: Significa que a imobiliaria nao aplicou o desconto ou concedeu um abatimento menor do que o determinado pela Lei 8.245/1991. O sistema informa a diferenca exata pendente e habilita o ciclo na aba Dashboard para que voce possa enviar a cobranca formal.
+
+---
+
+### Perguntas Frequentes (FAQ) para o Advogado
+
+- **Minhas senhas e dados bancarios estao protegidos?**
+  Sim. Todo o processamento ocorre no seu proprio computador ou servidor privado. O sistema foi desenvolvido em estrita conformidade com a LGPD (Lei Geral de Protecao de Dados - Lei nº 13.709/2018), sanitizando dados pessoais e nao transmitindo credenciais a terceiros.
+- **E se meu boleto de condominio tiver uma senha diferente?**
+  Basta abrir o arquivo `.env`, alterar a variavel `CONDO_PDF_PASSWORD` para a senha do seu boleto e salvar. O sistema descriptografa o documento na memoria e salva uma copia limpa para que o analista da imobiliaria possa abri-lo sem impedimentos.
+- **O que significa o status "Pendente Comprovante"?**
+  Significa que o boleto do condominio ja foi auditado, mas o sistema ainda aguarda a identificacao do comprovante de pagamento bancario/PIX daquele mes para certificar a quitacao antes de liberar o protocolo de ressarcimento.
+
+---
+
 ## 4. Testing & Verification
 
 The project follows Test-Driven Development (TDD) across all modules.
