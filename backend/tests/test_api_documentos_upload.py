@@ -60,8 +60,11 @@ def mock_bitrix_client():
 
 
 @pytest.fixture
-def client(db_session: Session, mock_bitrix_client: httpx.AsyncClient):
+def client(db_session: Session, mock_bitrix_client: httpx.AsyncClient, tmp_path, monkeypatch):
     """FastAPI TestClient with overridden get_db and mock submitter client."""
+    # Keep archived uploads inside the test sandbox instead of /data/storage.
+    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "storage"))
+
     from app.routes.ciclos import set_default_http_client
 
     def _override_get_db():

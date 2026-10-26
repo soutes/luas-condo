@@ -17,7 +17,7 @@ This repository is structured for transparent evaluation against the 12 course c
 | 5 | **Application** | 2 | [Quickstart](#3-quickstart--local-development) | Production-ready full-stack application (FastAPI, React 18, Vite 5, PostgreSQL 16) starting with a single command: `docker compose up --build`. |
 | 6 | **Testing** | 2 | [Testing Guide](#4-testing--verification) | Comprehensive automated test suites for backend (`pytest`) and frontend (`npm test`), 100% passing. |
 | 7 | **Containerization** | 2 | [`docker-compose.yml`](docker-compose.yml) | 6 containerized services (`backend`, `frontend`, `mock-bitrix`, `db`, `prometheus`, `grafana`) with health checks and volume persistence. |
-| 8 | **Deployment** | 2 | [Deployment Runbook](#5-deployment-runbook--demo-guide) | Step-by-step production runbook, environment configuration, and interactive live demo walkthrough. |
+| 8 | **Deployment** | 2 | [Deployment Runbook](#5-deployment-runbook--demo-guide) | Live at [condo.147-15-76-139.sslip.io](https://condo.147-15-76-139.sslip.io) (health: [`/api/health`](https://condo.147-15-76-139.sslip.io/api/health)), plus step-by-step production runbook and demo walkthrough. |
 | 9 | **CI/CD** | 3 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | GitHub Actions pipeline with PR test automation, automated CD to dev, and manual production deployment with rollback parameter. |
 | 10 | **Observability** | 2 | [`docs/architecture.md`](docs/architecture.md) | OpenTelemetry distributed tracing with shared `trace_id`, Prometheus metrics, LGPD/PII sanitization filter, Grafana dashboards. |
 | 11 | **Alerting on User Impact** | 1 | [`monitoring/alert_rules.yml`](monitoring/alert_rules.yml) | Real user impact alerts: `CondoSubmissionFailed` (reimbursement failure) and `CondoSlaBreachWarning` (SLA expiration risk). |
@@ -369,6 +369,8 @@ This verifies:
 ---
 
 ## 5. Deployment Runbook & Demo Guide
+
+**Live deployment**: [https://condo.147-15-76-139.sslip.io](https://condo.147-15-76-139.sslip.io) (Caddy + Docker Compose on a VM, HTTPS via Let's Encrypt; rule in [`deploy/condo.caddy`](deploy/condo.caddy)).
 
 ### Live Demo Walkthrough
 To demonstrate end-to-end functionality using the pre-seeded reference cycle:

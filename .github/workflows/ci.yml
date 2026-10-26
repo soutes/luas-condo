@@ -58,6 +58,8 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Run Backend Pytest Suite
+        env:
+          STORAGE_DIR: ${{ runner.temp }}/storage
         run: |
           pytest --maxfail=1 -v
 
