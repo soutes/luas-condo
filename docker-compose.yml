@@ -38,7 +38,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-luas_condo}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
       MOCK_BITRIX_URL: http://mock-bitrix:8080
-      MOCK_SUBMISSION: ${MOCK_SUBMISSION:-true}
+      MOCK_SUBMISSION: ${MOCK_SUBMISSION:-false}
+      IBAGY_TENANT_EMAIL: ${IBAGY_TENANT_EMAIL:-soutes@gmail.com}
       CONDO_PDF_PASSWORD: ${CONDO_PDF_PASSWORD:-04293}
       SYNDKOS_EMAIL_SENDER: ${SYNDKOS_EMAIL_SENDER:-naoresponda@syndkos.com.br}
       IMAP_SERVER: ${IMAP_SERVER:-imap.gmail.com}

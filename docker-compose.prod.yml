@@ -41,6 +41,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-luas_condo}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
       MOCK_SUBMISSION: ${MOCK_SUBMISSION:-false}
+      IBAGY_TENANT_EMAIL: ${IBAGY_TENANT_EMAIL:-soutes@gmail.com}
       IBAGY_BITRIX_URL: ${IBAGY_BITRIX_URL:-https://ibagy.bitrix24.site/condominioressarcimento/ressarcimento/}
       CONTRATO_PADRAO: ${CONTRATO_PADRAO:-09638.003.03}
       CONDO_PDF_PASSWORD: ${CONDO_PDF_PASSWORD:-04293}

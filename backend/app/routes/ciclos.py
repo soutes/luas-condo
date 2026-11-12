@@ -381,7 +381,7 @@ async def submeter_ciclo(
 
     submission_payload = SubmissionPayload(
         nome=req.nome or os.getenv("IBAGY_TENANT_NAME", "Luiz Augusto Soutes"),
-        email=req.email or os.getenv("IBAGY_TENANT_EMAIL", "luizsoutes@gmail.com"),
+        email=req.email or os.getenv("IBAGY_TENANT_EMAIL", "soutes@gmail.com"),
         telefone=req.telefone or os.getenv("IBAGY_TENANT_PHONE", "48999999999"),
         contrato=req.contrato or os.getenv("IBAGY_CONTRACT_NUM", "09638.003.03"),
         observacoes=obs_text,

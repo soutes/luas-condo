@@ -125,7 +125,7 @@ async def execute_email_sync(
                 if ciclo.status_ciclo == StatusCiclo.PRONTO_PARA_ENVIO:
                     payload = SubmissionPayload(
                         nome=os.getenv("IBAGY_TENANT_NAME", "Luiz Augusto Soutes"),
-                        email=os.getenv("IBAGY_TENANT_EMAIL", "luizsoutes@gmail.com"),
+                        email=os.getenv("IBAGY_TENANT_EMAIL", "soutes@gmail.com"),
                         telefone=os.getenv("IBAGY_TENANT_PHONE", "48999999999"),
                         contrato=os.getenv("IBAGY_CONTRACT_NUM", "09638.003.03"),
                         ciclo_id=ciclo.id,
