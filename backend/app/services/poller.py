@@ -69,7 +69,9 @@ async def execute_email_sync(
         storage_dir = os.getenv("STORAGE_DIR", "/data/storage")
 
         # Fetch new messages using read-only EXAMINE mode
-        docs = fetch_new_condo_emails(
+        # Blocking IMAP I/O runs in a worker thread so the event loop (and app startup) stays responsive
+        docs = await asyncio.to_thread(
+            fetch_new_condo_emails,
             imap_client=imap_client,
             host=host,
             port=port,
@@ -109,7 +111,11 @@ async def execute_email_sync(
         cycles = []
         for doc in sorted(docs, key=lambda d: doc_order.get(d.doc_type, 3)):
             try:
-                cycles.extend(sync_condo_cycle(db, [doc], storage_dir=storage_dir))
+                cycles.extend(
+                    await asyncio.to_thread(
+                        sync_condo_cycle, db, [doc], storage_dir=storage_dir
+                    )
+                )
             except Exception as doc_exc:
                 logger.warning(
                     f"Falha ao processar documento {doc.filename}: {doc_exc}"

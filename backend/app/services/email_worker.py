@@ -706,7 +706,10 @@ def sync_condo_cycle(
             ciclo.valor_saldo_residual = max(Decimal("0.00"), saldo)
             ciclo.ultima_verificacao = datetime.now(timezone.utc)
 
-            if ciclo.valor_saldo_residual <= Decimal("0.00"):
+            if ciclo.status_ciclo in (StatusCiclo.ENVIADO, StatusCiclo.PROCESSADO_ALUGUEL):
+                # Already submitted: never reopen the cycle when the boleto is re-ingested.
+                pass
+            elif ciclo.valor_saldo_residual <= Decimal("0.00"):
                 ciclo.status_ciclo = StatusCiclo.CONCILIADO_SEM_PENDENCIA
                 ciclo.detalhes_verificacao = (
                     f"Conciliado sem pendencia. Total locador R$ {ciclo.valor_ressarcimento:.2f} "
