@@ -109,6 +109,81 @@ def _render_success_html(protocol: str) -> str:
 </html>"""
 
 
+def _render_widget_html(fail: bool = False) -> str:
+    """
+    HTML that imitates the real Ibagy Bitrix24 CRM form widget (b24-form classes, field
+    names name/email/phone, two file fields, an 'Enviar' button and success/error states).
+    The real portal reports no protocol: it answers crm.site.form.fill with a CRM resultId.
+    """
+    fail_qs = "&fail=1" if fail else ""
+    return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Formulario do cliente (mock widget Bitrix24)</title>
+  <style>
+    body {{ font-family: sans-serif; margin: 2rem; }}
+    .b24-form-field {{ margin-bottom: 1rem; display: flex; flex-direction: column; }}
+    .b24-form-control {{ padding: 0.5rem; }}
+    .b24-form-state {{ display: none; padding: 1rem; margin-top: 1rem; }}
+    .b24-form-state.visible {{ display: block; }}
+  </style>
+</head>
+<body>
+  <p>Segue link de orientacao do local para encontrar o numero do seu contrato.</p>
+  <div class="b24-form">
+    <form id="b24-form" novalidate>
+      <div class="b24-form-field"><label class="b24-form-control-label">Nome do inquilino *</label>
+        <input class="b24-form-control" type="text" name="name" id="b24-form-field-2"></div>
+      <div class="b24-form-field"><label class="b24-form-control-label">E-mail *</label>
+        <input class="b24-form-control" type="email" name="email" id="b24-form-field-3"></div>
+      <div class="b24-form-field"><label class="b24-form-control-label">Telefone *</label>
+        <input class="b24-form-control" type="tel" name="phone" id="b24-form-field-4"></div>
+      <div class="b24-form-field"><label class="b24-form-control-label">Numero do contrato *</label>
+        <input class="b24-form-control" type="text" id="b24-form-field-5"></div>
+      <div class="b24-form-field"><label class="b24-form-control-label">Observacoes</label>
+        <textarea class="b24-form-control" id="b24-form-field-6"></textarea></div>
+      <div class="b24-form-field"><label class="b24-form-control-label">Boleto condominio*</label>
+        <input type="file" id="file-boleto" class="upload"></div>
+      <div class="b24-form-field"><label class="b24-form-control-label">Comprovante de pagamento*</label>
+        <input type="file" id="file-comprovante" class="upload"></div>
+      <button type="submit" class="b24-form-btn">Enviar</button>
+    </form>
+    <div class="b24-form-state b24-form-success" role="status">Obrigado! Recebemos sua solicitacao.</div>
+    <div class="b24-form-state b24-form-error" role="alert">Falha ao enviar o formulario.</div>
+  </div>
+  <script>
+    const ajax = (action, body) => fetch('/bitrix/services/main/ajax.php?action=' + action + '{fail_qs}', {{ method: 'POST', body }});
+    document.querySelectorAll('input.upload').forEach(el => el.addEventListener('change', () => {{
+      const fd = new FormData(); fd.append('file', el.files[0]);
+      ajax('crm.site.fileUploader.upload', fd);
+    }}));
+    document.getElementById('b24-form').addEventListener('submit', async (ev) => {{
+      ev.preventDefault();
+      const ok = (id) => document.getElementById(id).value.trim() !== '';
+      if (!(ok('b24-form-field-2') && ok('b24-form-field-3') && ok('b24-form-field-4') && ok('b24-form-field-5'))
+          || !document.getElementById('file-boleto').files.length || !document.getElementById('file-comprovante').files.length) {{
+        return;
+      }}
+      const fd = new FormData();
+      fd.append('name', document.getElementById('b24-form-field-2').value);
+      fd.append('email', document.getElementById('b24-form-field-3').value);
+      fd.append('phone', document.getElementById('b24-form-field-4').value);
+      fd.append('contrato', document.getElementById('b24-form-field-5').value);
+      fd.append('observacoes', document.getElementById('b24-form-field-6').value);
+      const res = await ajax('crm.site.form.fill', fd);
+      const data = await res.json().catch(() => ({{}}));
+      if (res.ok && data.status === 'success') {{
+        document.querySelector('.b24-form-success').classList.add('visible');
+      }} else {{
+        document.querySelector('.b24-form-error').classList.add('visible');
+      }}
+    }});
+  </script>
+</body>
+</html>"""
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "mock-bitrix"}
@@ -231,3 +306,21 @@ async def post_reimbursement(
             "observacoes": str(observacoes),
         },
     )
+
+
+@app.get("/widget/ressarcimento/")
+async def get_widget_form(fail: Optional[str] = Query(None)):
+    """Page imitating the real Bitrix24 widget form (see _render_widget_html)."""
+    return HTMLResponse(content=_render_widget_html(fail=bool(fail)))
+
+
+@app.post("/bitrix/services/main/ajax.php")
+async def bitrix_ajax(action: str = Query(...), fail: Optional[str] = Query(None)):
+    """Imitates the two Bitrix ajax actions the widget uses (file upload, form fill)."""
+    if action == "crm.site.fileUploader.upload":
+        return JSONResponse({"status": "success", "data": {"file": {"id": uuid.uuid4().hex[:8]}}})
+    if action == "crm.site.form.fill":
+        if fail:
+            return JSONResponse(status_code=500, content={"status": "error", "errors": [{"message": "simulated"}]})
+        return JSONResponse({"status": "success", "data": {"resultId": 4242}})
+    return JSONResponse(status_code=404, content={"status": "error", "errors": [{"message": "unknown action"}]})

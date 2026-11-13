@@ -450,6 +450,27 @@ Required repository (or environment) secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEP
 strictly) and optionally `DEPLOY_PATH` (default `/opt/luas-condo`). Without them the deploy jobs
 fail with an explicit message instead of silently passing.
 
+### Real Submission to Ibagy (browser required)
+
+The Ibagy form is a Bitrix24 JavaScript widget, so a plain HTTP POST cannot file a request. With
+`MOCK_SUBMISSION=false` the backend always drives the form with headless Chromium
+(`bitrix_submitter._run_widget_flow`): it fills name, e-mail, phone (normalised to `55 XX 9XXXX-XXXX`),
+contract number, notes, attaches the boleto and the receipt, clicks **Enviar** and waits for the
+widget's success state. The portal returns no protocol; the CRM `resultId` is stored as the reference
+(`BITRIX-<id>`). If the answer is ambiguous the cycle is **not** marked sent and the message says to
+check the portal or e-mail before retrying, to avoid duplicates.
+
+Chromium is opt-in so small hosts stay light: build with `INSTALL_BROWSER=true`
+(`docker compose build --build-arg INSTALL_BROWSER=true backend`). The browser starts only when free
+RAM is at least `BROWSER_MIN_FREE_MB` (default 300), one submission at a time. Without Chromium the app
+answers with an actionable message. To check the form without filing anything:
+
+```bash
+python -m app.tools.ibagy_dry_run --boleto boleto.pdf --comprovante comprovante.pdf
+```
+
+It fills everything and attaches the files (the portal stores them temporarily) but never clicks Enviar.
+
 ### Alerting and Tracing Wiring
 
 - `monitoring/prometheus.yml` loads `monitoring/alert_rules.yml` and sends firing alerts to Alertmanager.
