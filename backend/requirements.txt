@@ -21,6 +21,7 @@ playwright>=1.43.0
 # Telemetry and Observability
 opentelemetry-api>=1.24.0
 opentelemetry-sdk>=1.24.0
+opentelemetry-exporter-otlp-proto-http>=1.24.0
 opentelemetry-instrumentation-fastapi>=0.45b0
 prometheus-client>=0.20.0
 

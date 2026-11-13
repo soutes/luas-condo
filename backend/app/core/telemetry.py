@@ -4,6 +4,8 @@ No emojis used.
 """
 
 from contextlib import contextmanager
+import logging
+import os
 import re
 from typing import Any, Optional
 import uuid
@@ -22,6 +24,8 @@ from prometheus_client import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 # Global tracer cache
 _GLOBAL_TRACER: Optional[Tracer] = None
 
@@ -35,6 +39,35 @@ BEARER_TOKEN_REGEX = re.compile(r"(?i)\b(bearer\s+)([a-zA-Z0-9_\-\.]+)")
 SENSITIVE_FIELD_NAMES = ("password", "email_pass", "secret", "token", "chave_pix")
 
 
+def _otlp_traces_endpoint(base_endpoint: str) -> str:
+    endpoint = base_endpoint.strip().rstrip("/")
+    return endpoint if endpoint.endswith("/v1/traces") else f"{endpoint}/v1/traces"
+
+
+def build_tracer_provider(service_name: str = "luas-condo") -> TracerProvider:
+    """
+    Build a TracerProvider. When OTEL_EXPORTER_OTLP_ENDPOINT is set, spans are exported
+    in batches over OTLP/HTTP (e.g. to Jaeger on http://jaeger:4318). Export is optional:
+    a missing exporter package or an unset endpoint leaves tracing in-process only.
+    """
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    if endpoint:
+        try:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+            provider.add_span_processor(
+                BatchSpanProcessor(OTLPSpanExporter(endpoint=_otlp_traces_endpoint(endpoint)))
+            )
+        except ImportError:
+            logger.warning(
+                "OTEL_EXPORTER_OTLP_ENDPOINT definido, mas opentelemetry-exporter-otlp-proto-http "
+                "nao esta instalado; traces nao serao exportados."
+            )
+    return provider
+
+
 def get_tracer(service_name: str = "luas-condo", provider: Optional[TracerProvider] = None) -> Tracer:
     """
     Return configured OpenTelemetry Tracer.
@@ -46,8 +79,7 @@ def get_tracer(service_name: str = "luas-condo", provider: Optional[TracerProvid
 
     current_provider = trace.get_tracer_provider()
     if not isinstance(current_provider, TracerProvider):
-        new_provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-        trace.set_tracer_provider(new_provider)
+        trace.set_tracer_provider(build_tracer_provider(service_name))
 
     _GLOBAL_TRACER = trace.get_tracer(service_name)
     return _GLOBAL_TRACER

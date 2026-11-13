@@ -11,6 +11,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from app.core.database import init_db
 from app.core.telemetry import (
     get_current_trace_id,
+    get_tracer,
     get_prometheus_metrics,
     trace_step,
 )
@@ -40,6 +41,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Configure the tracer provider (OTLP export when OTEL_EXPORTER_OTLP_ENDPOINT is set)
+get_tracer()
 
 # OpenTelemetry FastAPI automatic instrumentation
 FastAPIInstrumentor.instrument_app(app)

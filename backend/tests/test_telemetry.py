@@ -235,3 +235,48 @@ def test_fastapi_trace_id_header_propagation():
     assert response.status_code == 200
     assert response.headers.get("x-trace-id") == custom_trace_id
     assert response.json().get("trace_id") == custom_trace_id
+
+
+# ---------------------------------------------------------------------------
+# Trace export (OTLP)
+# ---------------------------------------------------------------------------
+
+def test_build_tracer_provider_without_endpoint_has_no_exporter(monkeypatch):
+    from app.core.telemetry import build_tracer_provider
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    provider = build_tracer_provider("luas-condo-test")
+    assert provider._active_span_processor._span_processors == ()
+
+
+def test_build_tracer_provider_with_endpoint_exports_via_otlp_http(monkeypatch):
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from app.core.telemetry import build_tracer_provider
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318")
+    provider = build_tracer_provider("luas-condo-test")
+    processors = provider._active_span_processor._span_processors
+    assert len(processors) == 1
+    assert isinstance(processors[0], BatchSpanProcessor)
+    exporter = processors[0].span_exporter
+    assert isinstance(exporter, OTLPSpanExporter)
+    assert exporter._endpoint == "http://jaeger:4318/v1/traces"
+    provider.shutdown()
+
+
+def test_build_tracer_provider_survives_missing_exporter_package(monkeypatch):
+    import builtins
+    from app.core.telemetry import build_tracer_provider
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("opentelemetry.exporter"):
+            raise ImportError("simulated missing exporter")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318")
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    provider = build_tracer_provider("luas-condo-test")
+    assert provider._active_span_processor._span_processors == ()
