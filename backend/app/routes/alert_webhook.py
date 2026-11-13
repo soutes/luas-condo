@@ -4,38 +4,15 @@ Receives firing alerts, invokes autonomous on-call agent, and executes self-heal
 No emojis used.
 """
 
-import hmac
-import os
-from typing import Any, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from typing import Any
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.agents.on_call import handle_incident_alert
 from app.core.database import get_db
+from app.core.security import require_alert_token
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
-
-
-def require_alert_token(authorization: Optional[str] = Header(default=None)) -> None:
-    """
-    Authenticate the Alertmanager webhook with a shared bearer token (ALERT_WEBHOOK_TOKEN).
-    Fails closed: if no token is configured on the server, every request is refused.
-    """
-    expected = os.getenv("ALERT_WEBHOOK_TOKEN", "").strip()
-    if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Webhook de alertas desabilitado: ALERT_WEBHOOK_TOKEN nao configurado",
-        )
-    scheme, _, supplied = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(
-        supplied.strip().encode("utf-8"), expected.encode("utf-8")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token de webhook invalido",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
 
 @router.post("/webhook", status_code=status.HTTP_200_OK, dependencies=[Depends(require_alert_token)])

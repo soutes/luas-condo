@@ -20,7 +20,12 @@ import re
 from typing import Any, Optional, Union
 from sqlalchemy.orm import Session
 
-from app.models.entities import CicloCondominio, ItemRateio, StatusCiclo
+from app.models.entities import (
+    CicloCondominio,
+    CompetenciaDescartada,
+    ItemRateio,
+    StatusCiclo,
+)
 from app.services.audit_engine import audit_condo_bill
 from app.services.parser_aluguel import ParsedAluguelBill, parse_aluguel_pdf
 from app.services.parser_boleto import (
@@ -647,6 +652,10 @@ def sync_condo_cycle(
             .filter_by(competencia=parsed_bill.competencia)
             .first()
         )
+
+        if ciclo is None and db_session.get(CompetenciaDescartada, parsed_bill.competencia) is not None:
+            # Discarded by the user: do not resurrect the cycle from an old e-mail.
+            continue
 
         if ciclo is None:
             ciclo = CicloCondominio(

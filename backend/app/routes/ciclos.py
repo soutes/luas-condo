@@ -18,10 +18,13 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import require_write_token
 from app.models.entities import (
     CicloCondominio,
+    CompetenciaDescartada,
     ResponsabilidadeItem,
     StatusCiclo,
+    StatusSubmissao,
 )
 from app.schemas.condo import (
     CicloCondominioResponse,
@@ -151,7 +154,7 @@ def get_cycle_checklist(ciclo_id: uuid.UUID, db: Session = Depends(get_db)) -> V
     return build_checklist_response(ciclo)
 
 
-@router.post("/sync-email")
+@router.post("/sync-email", dependencies=[Depends(require_write_token)])
 async def trigger_email_sync(db: Session = Depends(get_db)):
     """
     Manually trigger IMAP email inbox check, document extraction, and cycle synchronization.
@@ -161,7 +164,7 @@ async def trigger_email_sync(db: Session = Depends(get_db)):
     return res
 
 
-@router.post("/seed-demo", response_model=CicloCondominioResponse)
+@router.post("/seed-demo", response_model=CicloCondominioResponse, dependencies=[Depends(require_write_token)])
 def seed_demo_cycle(db: Session = Depends(get_db)) -> CicloCondominioResponse:
     """
     Create the reference Villa Salomy demo cycle so the dashboard has submittable
@@ -187,7 +190,7 @@ def seed_demo_cycle(db: Session = Depends(get_db)) -> CicloCondominioResponse:
     return ciclo
 
 
-@router.post("/documentos")
+@router.post("/documentos", dependencies=[Depends(require_write_token)])
 def upload_documentos(
     files: list[UploadFile] = File(...),
     competencia: Optional[str] = Form(None),
@@ -296,7 +299,7 @@ def upload_documentos(
     return {"arquivos": report, "ciclos_afetados": ciclos_afetados, "falhas": falhas}
 
 
-@router.post("/{ciclo_id}/submeter", response_model=CicloSubmissaoResponse)
+@router.post("/{ciclo_id}/submeter", response_model=CicloSubmissaoResponse, dependencies=[Depends(require_write_token)])
 async def submeter_ciclo(
     ciclo_id: uuid.UUID,
     payload_in: Optional[CicloSubmissaoRequest] = None,
@@ -409,3 +412,30 @@ async def submeter_ciclo(
         trace_id=receipt.trace_id,
         ciclo_id=ciclo.id,
     )
+
+
+@router.delete("/{ciclo_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_write_token)])
+def excluir_ciclo(ciclo_id: uuid.UUID, db: Session = Depends(get_db)) -> None:
+    """
+    Delete a pending cycle (items and failed submission attempts go with it).
+    Refused for cycles already submitted. The competence is remembered so the e-mail
+    sync does not recreate the cycle; a manual document upload can bring it back.
+    """
+    ciclo = db.get(CicloCondominio, ciclo_id)
+    if not ciclo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ciclo {ciclo_id} nao encontrado",
+        )
+    ja_enviado = ciclo.status_ciclo in (StatusCiclo.ENVIADO, StatusCiclo.PROCESSADO_ALUGUEL) or any(
+        sub.status == StatusSubmissao.SUCESSO for sub in ciclo.submissoes
+    )
+    if ja_enviado:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ciclo ja enviado ao Ibagy: nao pode ser excluido",
+        )
+    if db.get(CompetenciaDescartada, ciclo.competencia) is None:
+        db.add(CompetenciaDescartada(competencia=ciclo.competencia))
+    db.delete(ciclo)
+    db.commit()

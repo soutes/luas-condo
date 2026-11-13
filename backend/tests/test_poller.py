@@ -83,7 +83,7 @@ def test_api_trigger_email_sync(db_session: Session, monkeypatch):
             pass
 
     app.dependency_overrides[get_db] = _override_get_db
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Authorization": "Bearer test-write-token-0123456789abcdef"}) as client:
         resp = client.post("/api/ciclos/sync-email")
         assert resp.status_code == 200
         data = resp.json()

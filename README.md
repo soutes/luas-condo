@@ -424,6 +424,7 @@ IMAP_PASSWORD=secret
 SYNDKOS_EMAIL_SENDER=naoresponda@syndkos.com.br
 OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 ALERT_WEBHOOK_TOKEN=generate_with_openssl_rand_hex_32
+API_WRITE_TOKEN=generate_with_openssl_rand_hex_32
 IBAGY_TENANT_EMAIL=seu_email_aqui
 IBAGY_TENANT_PHONE=seu_telefone_com_ddd
 ```
@@ -454,6 +455,8 @@ fail with an explicit message instead of silently passing.
 - `monitoring/prometheus.yml` loads `monitoring/alert_rules.yml` and sends firing alerts to Alertmanager.
 - `monitoring/alertmanager.yml` calls `POST /api/alerts/webhook` on the backend with `Authorization: Bearer $ALERT_WEBHOOK_TOKEN`.
 - The webhook is internal only: Caddy answers 404 for `/api/alerts*` publicly.
+- Write routes (`POST` sync, seed, upload, submit and `DELETE` of a cycle) require `Authorization: Bearer $API_WRITE_TOKEN`; reads stay open. The web app sends the key saved under **Chave de acesso** (stored only in the browser). Unset token = writes refused.
+- Pending cycles can be deleted from the dashboard (**Excluir ciclo**); cycles already sent cannot. A deleted competence is remembered so the e-mail sync does not recreate it; uploading its boleto on the Documentos tab brings it back.
 - The backend exports spans over OTLP/HTTP to Jaeger when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 ---

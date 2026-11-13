@@ -79,7 +79,7 @@ def client(
 
     app.dependency_overrides[get_db] = _override_get_db
     set_default_http_client(mock_bitrix_client)
-    with TestClient(app) as test_client:
+    with TestClient(app, headers={"Authorization": "Bearer test-write-token-0123456789abcdef"}) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     set_default_http_client(None)
@@ -131,7 +131,7 @@ def test_seed_demo_blocked_when_submission_is_real(
     app.dependency_overrides[get_db] = _override_get_db
     set_default_http_client(mock_bitrix_client)
     try:
-        with TestClient(app) as test_client:
+        with TestClient(app, headers={"Authorization": "Bearer test-write-token-0123456789abcdef"}) as test_client:
             response = test_client.post("/api/ciclos/seed-demo")
             assert response.status_code == 403
             assert "MOCK_SUBMISSION" in response.json()["detail"]

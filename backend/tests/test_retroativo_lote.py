@@ -83,7 +83,7 @@ def client(db_session: Session, mock_bitrix_client: httpx.AsyncClient):
 
     app.dependency_overrides[get_db] = _override_get_db
     set_default_http_client(mock_bitrix_client)
-    with TestClient(app) as test_client:
+    with TestClient(app, headers={"Authorization": "Bearer test-write-token-0123456789abcdef"}) as test_client:
         yield test_client
     app.dependency_overrides.clear()
     set_default_http_client(None)

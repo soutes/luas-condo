@@ -53,6 +53,7 @@ def test_alertmanager_service_receives_token_and_backend_checks_it():
     services = load_yaml("docker-compose.yml")["services"]
     assert "ALERT_WEBHOOK_TOKEN" in services["alertmanager"]["environment"]
     assert "ALERT_WEBHOOK_TOKEN" in services["backend"]["environment"]
+    assert "API_WRITE_TOKEN" in services["backend"]["environment"]
 
 
 def test_backend_exports_traces_to_jaeger_otlp_http():

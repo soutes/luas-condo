@@ -255,3 +255,16 @@ class IncidenteOnCall(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+
+class CompetenciaDescartada(Base):
+    """Competence the user discarded: e-mail sync must not recreate its cycle."""
+
+    __tablename__ = "competencias_descartadas"
+
+    competencia: Mapped[str] = mapped_column(String(7), primary_key=True)
+    descartado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
