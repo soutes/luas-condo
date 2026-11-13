@@ -71,9 +71,14 @@ def mock_bitrix_client():
     return TestClient(mock_bitrix_app)
 
 
+TEST_WEBHOOK_TOKEN = "test-token-0123456789abcdef"
+AUTH_HEADERS = {"Authorization": f"Bearer {TEST_WEBHOOK_TOKEN}"}
+
+
 @pytest.fixture
-def client_app(db_session: Session, mock_bitrix_client):
+def client_app(db_session: Session, mock_bitrix_client, monkeypatch):
     """FastAPI TestClient with overridden get_db dependency and injected test transport."""
+    monkeypatch.setenv("ALERT_WEBHOOK_TOKEN", TEST_WEBHOOK_TOKEN)
     def _override_get_db():
         try:
             yield db_session
@@ -470,7 +475,7 @@ def test_alertmanager_webhook_endpoint_resolves_incident(client_app, db_session:
         ],
     }
 
-    response = client_app.post("/api/alerts/webhook", json=webhook_payload)
+    response = client_app.post("/api/alerts/webhook", json=webhook_payload, headers=AUTH_HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] in ("processed", "ok", "success")
@@ -510,7 +515,7 @@ def test_alertmanager_webhook_endpoint_escalates_unrecoverable(client_app, db_se
         ],
     }
 
-    response = client_app.post("/api/alerts/webhook", json=webhook_payload)
+    response = client_app.post("/api/alerts/webhook", json=webhook_payload, headers=AUTH_HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert "incidentes" in data
@@ -538,7 +543,7 @@ def test_alertmanager_webhook_ignores_resolved_alerts(client_app):
         ],
     }
 
-    response = client_app.post("/api/alerts/webhook", json=webhook_payload)
+    response = client_app.post("/api/alerts/webhook", json=webhook_payload, headers=AUTH_HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] in ("processed", "ok")
@@ -557,9 +562,51 @@ def test_alertmanager_webhook_ignores_resolved_alerts(client_app):
             "description": "Single resolved notification",
         },
     }
-    resp_single = client_app.post("/api/alerts/webhook", json=single_resolved)
+    resp_single = client_app.post("/api/alerts/webhook", json=single_resolved, headers=AUTH_HEADERS)
     assert resp_single.status_code == 200
     data_single = resp_single.json()
     assert data_single["count"] == 0
     assert len(data_single["incidentes"]) == 0
 
+
+
+# ---------------------------------------------------------------------------
+# 7. Webhook authentication
+# ---------------------------------------------------------------------------
+
+_MIN_PAYLOAD = {"alerts": [], "status": "firing"}
+
+
+def test_webhook_rejects_missing_token(client_app):
+    response = client_app.post("/api/alerts/webhook", json=_MIN_PAYLOAD)
+    assert response.status_code == 401
+
+
+def test_webhook_rejects_wrong_token(client_app):
+    response = client_app.post(
+        "/api/alerts/webhook",
+        json=_MIN_PAYLOAD,
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert response.status_code == 401
+
+
+def test_webhook_rejects_non_bearer_scheme(client_app):
+    response = client_app.post(
+        "/api/alerts/webhook",
+        json=_MIN_PAYLOAD,
+        headers={"Authorization": TEST_WEBHOOK_TOKEN},
+    )
+    assert response.status_code == 401
+
+
+def test_webhook_accepts_valid_token(client_app):
+    response = client_app.post("/api/alerts/webhook", json=_MIN_PAYLOAD, headers=AUTH_HEADERS)
+    assert response.status_code == 200
+
+
+def test_webhook_fails_closed_when_token_not_configured(client_app, monkeypatch):
+    """Without a server-side token the endpoint must refuse everything, even a bearer value."""
+    monkeypatch.delenv("ALERT_WEBHOOK_TOKEN", raising=False)
+    response = client_app.post("/api/alerts/webhook", json=_MIN_PAYLOAD, headers=AUTH_HEADERS)
+    assert response.status_code == 503
