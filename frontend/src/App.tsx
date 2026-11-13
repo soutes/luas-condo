@@ -4,7 +4,9 @@ import { CycleCard } from "./components/CycleCard";
 import { AuditTable } from "./components/AuditTable";
 import { SubmissionPreview } from "./components/SubmissionPreview";
 import { DocumentosRetroativos } from "./components/DocumentosRetroativos";
+import { AccessKey } from "./components/AccessKey";
 import { formatBRL } from "./utils";
+import { AUTH_ERROR_MESSAGE, authHeaders } from "./auth";
 import {
   Building2,
   TrendingDown,
@@ -14,6 +16,7 @@ import {
   Scale,
   Mail,
   AlertCircle,
+  Trash2,
 } from "lucide-react";
 
 const FALLBACK_DEFAULT_CYCLES: Ciclo[] = [
@@ -78,13 +81,18 @@ export const App: React.FC = () => {
   const [sampleOffline, setSampleOffline] = useState<boolean>(false);
   const [seeding, setSeeding] = useState<boolean>(false);
   const [seedMessage, setSeedMessage] = useState<string | null>(null);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"dashboard" | "documentos">("dashboard");
 
   const handleSyncEmail = async () => {
     setSyncingEmail(true);
     setSyncMessage(null);
     try {
-      const res = await fetch("/api/ciclos/sync-email", { method: "POST" });
+      const res = await fetch("/api/ciclos/sync-email", { method: "POST", headers: authHeaders() });
+      if (res.status === 401 || res.status === 503) {
+        setSyncMessage(AUTH_ERROR_MESSAGE);
+        return;
+      }
       const data = await res.json();
       setSyncMessage(data.detail || "Verificacao de e-mail concluida");
       await fetchCiclos();
@@ -99,8 +107,10 @@ export const App: React.FC = () => {
     setSeeding(true);
     setSeedMessage(null);
     try {
-      const res = await fetch("/api/ciclos/seed-demo", { method: "POST" });
-      if (res.ok) {
+      const res = await fetch("/api/ciclos/seed-demo", { method: "POST", headers: authHeaders() });
+      if (res.status === 401 || res.status === 503) {
+        setSeedMessage(AUTH_ERROR_MESSAGE);
+      } else if (res.ok) {
         setSeedMessage(
           "Ciclo de demonstracao carregado (referencia Villa Salomy, submissao em modo mock)."
         );
@@ -166,9 +176,9 @@ export const App: React.FC = () => {
     try {
       const res = await fetch(`/api/ciclos/${selectedCiclo.id}/submeter`, {
         method: "POST",
-        headers: {
+        headers: authHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
           observacoes: customObs,
         }),
@@ -209,7 +219,10 @@ export const App: React.FC = () => {
         setSubmissionResult({
           status: "ERRO",
           protocolo: null,
-          mensagem: errData.detail || "Erro ao conectar com API de submissao",
+          mensagem:
+            res.status === 401 || res.status === 503
+              ? AUTH_ERROR_MESSAGE
+              : errData.detail || "Erro ao conectar com API de submissao",
         });
       }
     } catch (err: any) {
@@ -220,6 +233,41 @@ export const App: React.FC = () => {
       });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const canDelete =
+    !!selectedCiclo &&
+    !sampleOffline &&
+    selectedCiclo.status_ciclo !== "ENVIADO" &&
+    selectedCiclo.status_ciclo !== "PROCESSADO_ALUGUEL";
+
+  const handleExcluir = async () => {
+    if (!selectedCiclo || !canDelete) return;
+    const ok = window.confirm(
+      `Excluir o ciclo ${selectedCiclo.competencia}? Itens e tentativas de envio serao apagados. ` +
+        "Para trazer de volta, envie o boleto de novo pela aba Documentos."
+    );
+    if (!ok) return;
+    setDeleteMessage(null);
+    try {
+      const res = await fetch(`/api/ciclos/${selectedCiclo.id}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        setSubmissionResult(null);
+        setSelectedCicloId("");
+        setDeleteMessage(`Ciclo ${selectedCiclo.competencia} excluido.`);
+        await fetchCiclos();
+      } else if (res.status === 401 || res.status === 503) {
+        setDeleteMessage(AUTH_ERROR_MESSAGE);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setDeleteMessage(errData.detail || "Nao foi possivel excluir o ciclo");
+      }
+    } catch {
+      setDeleteMessage("Erro de rede ao excluir o ciclo");
     }
   };
 
@@ -261,6 +309,8 @@ export const App: React.FC = () => {
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span className="font-mono text-[11px]">Bitrix24 API Online</span>
             </div>
+
+            <AccessKey />
 
             <button
               type="button"
@@ -317,6 +367,19 @@ export const App: React.FC = () => {
 
         {activeTab === "dashboard" && (
           <>
+        {deleteMessage && (
+          <div className="p-3 bg-slate-900 border border-slate-700 text-xs flex items-center justify-between text-slate-200">
+            <span>{deleteMessage}</span>
+            <button
+              type="button"
+              onClick={() => setDeleteMessage(null)}
+              className="text-slate-400 hover:text-slate-100 font-bold ml-4"
+            >
+              x
+            </button>
+          </div>
+        )}
+
         {syncMessage && (
           <div className="p-3 bg-slate-900 border border-slate-700 text-xs flex items-center justify-between text-slate-200">
             <span>{syncMessage}</span>
@@ -491,6 +554,16 @@ export const App: React.FC = () => {
                 submissionResult={submissionResult}
                 submitDisabled={sampleOffline}
               />
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={handleExcluir}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-900 hover:bg-red-950/40 text-red-300 border border-red-900/60 text-xs font-bold uppercase tracking-wider rounded-none transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Excluir ciclo {selectedCiclo?.competencia}</span>
+                </button>
+              )}
             </div>
           </div>
         )}

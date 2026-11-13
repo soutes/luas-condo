@@ -1,3 +1,4 @@
+import { AUTH_ERROR_MESSAGE, authHeaders } from "../auth";
 import React, { useRef, useState } from "react";
 import { Upload, FileText, CheckCircle, AlertCircle, Loader2, BadgeCheck, Send } from "lucide-react";
 
@@ -74,7 +75,7 @@ export const DocumentosRetroativos: React.FC<DocumentosRetroativosProps> = ({
       if (competencia) {
         fd.append("competencia", competencia);
       }
-      const res = await fetch("/api/ciclos/documentos", { method: "POST", body: fd });
+      const res = await fetch("/api/ciclos/documentos", { method: "POST", headers: authHeaders(), body: fd });
       if (res.ok) {
         const data: UploadResultado = await res.json();
         setResultado(data);
@@ -85,7 +86,11 @@ export const DocumentosRetroativos: React.FC<DocumentosRetroativosProps> = ({
         onUploaded?.();
       } else {
         const errData = await res.json().catch(() => ({}));
-        setErro(errData.detail || "Falha no upload dos documentos");
+        setErro(
+          res.status === 401 || res.status === 503
+            ? AUTH_ERROR_MESSAGE
+            : errData.detail || "Falha no upload dos documentos"
+        );
       }
     } catch {
       setErro("Erro de rede no upload dos documentos");

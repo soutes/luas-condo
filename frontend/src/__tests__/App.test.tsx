@@ -201,3 +201,112 @@ describe("App Dashboard Integration", () => {
     expect(submitBtn).toBeDisabled();
   });
 });
+
+describe("Access key and cycle deletion", () => {
+  const PENDING = { ...REAL_API_CICLO, id: "9f1d2c3a-2222-4222-8222-000000000002", status_ciclo: "PENDENTE_COMPROVANTE", comprovante_pix_path: null };
+  const SENT = { ...REAL_API_CICLO, id: "9f1d2c3a-3333-4333-8333-000000000003", status_ciclo: "ENVIADO" };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("sends the saved access key as bearer token on write calls", async () => {
+    const calls: Array<{ url: string; options: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, options: any) => {
+        calls.push({ url, options });
+        if (url === "/api/ciclos" && (!options?.method || options.method === "GET")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([REAL_API_CICLO]) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ detail: "ok" }) });
+      })
+    );
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /Luas Condo/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /Chave de acesso/i }));
+    fireEvent.change(screen.getByLabelText(/Chave de acesso/i), { target: { value: "minha-chave" } });
+    fireEvent.click(screen.getByRole("button", { name: /Salvar chave/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Sincronizar E-mail/i }));
+    await waitFor(() => {
+      const sync = calls.find((c) => c.url === "/api/ciclos/sync-email");
+      expect(sync?.options.headers.Authorization).toBe("Bearer minha-chave");
+    });
+  });
+
+  it("explains a missing or wrong access key when the API answers 401", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, options: any) => {
+        if (url === "/api/ciclos" && (!options?.method || options.method === "GET")) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([REAL_API_CICLO]) });
+        }
+        return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ detail: "Token invalido" }) });
+      })
+    );
+
+    render(<App />);
+    await screen.findByRole("heading", { name: /Luas Condo/i });
+    fireEvent.click(screen.getByRole("button", { name: /Sincronizar E-mail/i }));
+
+    expect(await screen.findByText(/chave de acesso/i, { selector: "span" })).toBeInTheDocument();
+  });
+
+  it("offers deletion only for cycles that were not sent and calls DELETE after confirmation", async () => {
+    window.localStorage.setItem("luas_condo_access_key", "minha-chave");
+    const calls: Array<{ url: string; options: any }> = [];
+    let ciclos = [PENDING];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, options: any) => {
+        calls.push({ url, options });
+        if (options?.method === "DELETE") {
+          ciclos = [];
+          return Promise.resolve({ ok: true, status: 204, json: () => Promise.reject(new Error("no body")) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(ciclos) });
+      })
+    );
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+
+    render(<App />);
+    const btn = await screen.findByRole("button", { name: /Excluir ciclo/i });
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      const del = calls.find((c) => c.options?.method === "DELETE");
+      expect(del?.url).toBe(`/api/ciclos/${PENDING.id}`);
+      expect(del?.options.headers.Authorization).toBe("Bearer minha-chave");
+    });
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Excluir ciclo/i })).toBeNull());
+  });
+
+  it("does not call DELETE when the user declines the confirmation", async () => {
+    window.localStorage.setItem("luas_condo_access_key", "minha-chave");
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve([PENDING]) })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /Excluir ciclo/i }));
+
+    expect(fetchMock.mock.calls.some((c) => c[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("hides the delete button for cycles already sent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(() => Promise.resolve({ ok: true, json: () => Promise.resolve([SENT]) }))
+    );
+    render(<App />);
+    await screen.findByRole("heading", { name: /Luas Condo/i });
+    await screen.findAllByText(/VILLA SALOMY/i);
+    expect(screen.queryByRole("button", { name: /Excluir ciclo/i })).toBeNull();
+  });
+});
