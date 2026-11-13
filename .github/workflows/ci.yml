@@ -30,7 +30,7 @@ name: CI/CD Pipeline
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -88,46 +88,73 @@ jobs:
   deploy-dev:
     name: Automated Deploy to Dev
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >-
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
     environment: development
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-vm
+      cancel-in-progress: false
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy to Development Environment
-        run: |
-          echo "Automated continuous delivery to development environment"
-          echo "Deploying commit: ${{ github.sha }}"
+      - name: Deploy to VM over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_TARGET: ${{ github.event.inputs.rollback == 'true' && github.event.inputs.rollback_commit || github.sha }}
+        run: bash deploy/ci-deploy.sh
 
   deploy-prod:
     name: Manual Deploy to Production
     needs: test
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
     environment: production
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-vm
+      cancel-in-progress: false
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Validate Deployment Mode
+        env:
+          ROLLBACK: ${{ github.event.inputs.rollback }}
+          ROLLBACK_COMMIT: ${{ github.event.inputs.rollback_commit }}
         run: |
-          if [ "${{ github.event.inputs.rollback }}" = "true" ]; then
-            echo "ROLLBACK MODE ACTIVATED"
-            echo "Target rollback reference: ${{ github.event.inputs.rollback_commit }}"
+          if [ "$ROLLBACK" = "true" ]; then
+            if [ -z "$ROLLBACK_COMMIT" ]; then
+              echo "rollback_commit is required when rollback is enabled" >&2
+              exit 1
+            fi
+            echo "ROLLBACK MODE: target $ROLLBACK_COMMIT"
           else
-            echo "STANDARD PRODUCTION DEPLOYMENT"
-            echo "Deploying target commit: ${{ github.sha }}"
+            echo "STANDARD PRODUCTION DEPLOYMENT: target $GITHUB_SHA"
           fi
 
-      - name: Execute Production Deployment or Rollback
+      - name: Execute Production Deployment or Rollback over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_TARGET: ${{ github.event.inputs.rollback == 'true' && github.event.inputs.rollback_commit || github.sha }}
+        run: bash deploy/ci-deploy.sh
+
+      - name: Verify public health
         run: |
-          if [ "${{ github.event.inputs.rollback }}" = "true" ]; then
-            echo "Executing rollback procedure to target commit: ${{ github.event.inputs.rollback_commit }}"
-            echo "Rollback successfully completed."
-          else
-            echo "Executing production release"
-            echo "Production deployment successfully completed."
-          fi
+          for i in $(seq 1 30); do
+            if curl -fsS -m 15 https://condo.147-15-76-139.sslip.io/api/health; then exit 0; fi
+            sleep 10
+          done
+          echo "Public health check failed" >&2
+          exit 1
