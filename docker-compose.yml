@@ -109,6 +109,7 @@ services:
       - 'printf %s "$$ALERT_WEBHOOK_TOKEN" > /tmp/alert_webhook_token && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager'
     environment:
       ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-}
+    mem_limit: 64m
     ports:
       - "${ALERTMANAGER_HOST_IP:-127.0.0.1}:${ALERTMANAGER_HOST_PORT:-9093}:9093"
     volumes:
@@ -120,7 +121,8 @@ services:
     restart: unless-stopped
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
-      MEMORY_MAX_TRACES: "5000"
+      MEMORY_MAX_TRACES: "2000"
+    mem_limit: 160m
     ports:
       - "${JAEGER_HOST_IP:-127.0.0.1}:${JAEGER_HOST_PORT:-16686}:16686"
 

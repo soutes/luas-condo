@@ -94,6 +94,12 @@ condo loopback bindings.
 
 ## Deploying LuasCondo changes
 
+Automated path: GitHub Actions runs `deploy/ci-deploy.sh` (see README, "CI/CD Deployment"),
+which executes `deploy/deploy.sh` on the VM: fast-forward, rebuild, health check, automatic
+rollback. The VM `.env` must contain `COMPOSE_FILE=docker-compose.yml:docker-compose.vm.yml`
+so the stack joins the external `web` network that the shared Caddy uses; it also needs
+`ALERT_WEBHOOK_TOKEN` (shared by backend and Alertmanager). Manual path:
+
 ```bash
 # VM:
 cd /opt/luas-condo && git pull --ff-only

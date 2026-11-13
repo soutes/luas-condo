@@ -93,6 +93,15 @@ Once initialized, the services are available at:
 - **Mock Bitrix24 Portal**: `http://localhost:8080` (Property management emulator)
 - **Prometheus Metrics**: `http://localhost:9090` (Metrics and alert evaluator)
 - **Grafana Dashboards**: `http://localhost:3001` (Default credentials: `admin` / `admin`)
+- **Alertmanager**: `http://localhost:9093` (routes alerts to the On-Call Responder webhook)
+- **Jaeger Trace Viewer**: `http://localhost:16686` (OpenTelemetry traces, service `luas-condo`)
+
+The command above works from a fresh checkout: no `.env` and no pre-created Docker
+network are required. Optional but recommended for alerting: copy `.env.example` to
+`.env` and set `ALERT_WEBHOOK_TOKEN` (for example `openssl rand -hex 32`). Without it the
+alert webhook refuses every request (fail closed) and Alertmanager notifications are rejected.
+On the shared VM, add the Caddy network with `COMPOSE_FILE=docker-compose.yml:docker-compose.vm.yml`
+in `.env` (see `docs/vm-port-allocation-runbook.md`).
 
 ---
 
@@ -397,6 +406,8 @@ To demonstrate end-to-end functionality using the pre-seeded reference cycle:
 6. **Verify Observability**:
    - Open Prometheus at `http://localhost:9090` and query `condo_submissions_total`.
    - Open Grafana at `http://localhost:3001` to view live metric graphs.
+   - Open Jaeger at `http://localhost:16686`, pick service `luas-condo`, and follow a request trace (the `x-trace-id` response header carries the id).
+   - Open Alertmanager at `http://localhost:9093` to see firing user-impact alerts and their routing to the on-call agent.
 
 ### Production Environment Variables
 Configure the following environment variables in `.env` or deployment orchestration:
@@ -411,7 +422,10 @@ IMAP_SERVER=imap.example.com
 IMAP_USER=condo@example.com
 IMAP_PASSWORD=secret
 SYNDKOS_EMAIL_SENDER=naoresponda@syndkos.com.br
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+ALERT_WEBHOOK_TOKEN=generate_with_openssl_rand_hex_32
+IBAGY_TENANT_EMAIL=seu_email_aqui
+IBAGY_TENANT_PHONE=seu_telefone_com_ddd
 ```
 
 > [!NOTE]
@@ -420,6 +434,27 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 > - `CONTRATO_PADRAO`: Each user must configure their own lease contract number provided by Ibagy in their rental agreement and monthly billing statements.
 >
 > **Syndkos Inbound Pattern**: Condominium bills arrive from sender `naoresponda@syndkos.com.br` with subject pattern `Prezado(a) condômino(a) LUIZ AUGUSTO SOUTES, Segue em anexo seu boleto com vencimento em {vencimento} referente a {competencia}`. The IMAP worker uses this pattern to extract due dates and competence (`YYYY-MM`) directly for fast-path classification and cross-validation against the PDF demonstrativo.
+
+### CI/CD Deployment (GitHub Actions)
+
+Pushes to `main` run the tests and then deploy to the VM over SSH (`deploy/ci-deploy.sh` pipes
+`deploy/deploy.sh` to the server). The script fast-forwards the clone, rebuilds with Docker
+Compose and waits for `/api/health`; if the new version never becomes healthy it restores the
+previous commit automatically and fails the job. Production deploys and rollbacks are manual:
+run the workflow with `workflow_dispatch`, `environment=production`, optionally `rollback=true`
+and `rollback_commit=<sha>`.
+
+Required repository (or environment) secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`
+(a dedicated deploy key), `DEPLOY_KNOWN_HOSTS` (output of `ssh-keyscan <host>`, verified
+strictly) and optionally `DEPLOY_PATH` (default `/opt/luas-condo`). Without them the deploy jobs
+fail with an explicit message instead of silently passing.
+
+### Alerting and Tracing Wiring
+
+- `monitoring/prometheus.yml` loads `monitoring/alert_rules.yml` and sends firing alerts to Alertmanager.
+- `monitoring/alertmanager.yml` calls `POST /api/alerts/webhook` on the backend with `Authorization: Bearer $ALERT_WEBHOOK_TOKEN`.
+- The webhook is internal only: Caddy answers 404 for `/api/alerts*` publicly.
+- The backend exports spans over OTLP/HTTP to Jaeger when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 ---
 
