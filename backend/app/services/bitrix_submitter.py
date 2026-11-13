@@ -349,14 +349,6 @@ async def _run_widget_flow(
             trace_id=trace_id,
         )
 
-    uploads = {"done": 0}
-
-    def on_response(resp: Any) -> None:
-        if "fileUploader.upload" in resp.url and resp.status < 400:
-            uploads["done"] += 1
-
-    page.on("response", on_response)
-
     targets = {
         "nome": page.locator('input[name="name"]').first,
         "e-mail": page.locator('input[name="email"]').first,
@@ -383,21 +375,28 @@ async def _run_widget_flow(
     await targets["boleto"].set_input_files(boleto_file)
     await targets["comprovante"].set_input_files(comp_file)
 
-    for _ in range(240):
-        if uploads["done"] >= 2:
-            break
-        await page.wait_for_timeout(250)
-    else:
-        return await fail("Upload dos anexos para o Ibagy nao concluiu a tempo")
+    # The Bitrix widget only uploads the attachments when "Enviar" is clicked (upload first, then
+    # crm.site.form.fill), so there is nothing to wait for here: just confirm both files are
+    # listed in their fields.
+    for label, file_path in (("boleto", boleto_file), ("comprovante", comp_file)):
+        shown_name = os.path.basename(file_path)[:12].lower()
+        attached = False
+        for _ in range(40):
+            if shown_name in (await field(label).first.inner_text()).lower():
+                attached = True
+                break
+            await page.wait_for_timeout(250)
+        if not attached:
+            return await fail(f"Anexo do {label} nao apareceu no formulario do Ibagy")
 
     if dry_run:
-        await page.screenshot(path=screenshot_path)
+        await page.screenshot(path=screenshot_path, full_page=True)
         return SubmissionReceipt(
             status=StatusSubmissao.ERRO,
             protocolo=None,
             mensagem=(
-                "DRY-RUN: formulario preenchido e anexos carregados, mas o pedido NAO foi enviado "
-                "(nenhum clique em Enviar)."
+                "DRY-RUN: formulario preenchido e anexos selecionados, mas o pedido NAO foi enviado "
+                "(nenhum clique em Enviar; os anexos so sobem ao Ibagy no envio real)."
             ),
             screenshot_path=screenshot_path,
             trace_id=trace_id,

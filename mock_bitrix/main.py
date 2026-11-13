@@ -154,9 +154,10 @@ def _render_widget_html(fail: bool = False) -> str:
   </div>
   <script>
     const ajax = (action, body) => fetch('/bitrix/services/main/ajax.php?action=' + action + '{fail_qs}', {{ method: 'POST', body }});
+    // Like the real widget: selecting a file only lists its name; the upload happens on submit.
     document.querySelectorAll('input.upload').forEach(el => el.addEventListener('change', () => {{
-      const fd = new FormData(); fd.append('file', el.files[0]);
-      ajax('crm.site.fileUploader.upload', fd);
+      const tag = document.createElement('span'); tag.textContent = el.files[0].name;
+      el.parentElement.appendChild(tag);
     }}));
     document.getElementById('b24-form').addEventListener('submit', async (ev) => {{
       ev.preventDefault();
@@ -164,6 +165,10 @@ def _render_widget_html(fail: bool = False) -> str:
       if (!(ok('b24-form-field-2') && ok('b24-form-field-3') && ok('b24-form-field-4') && ok('b24-form-field-5'))
           || !document.getElementById('file-boleto').files.length || !document.getElementById('file-comprovante').files.length) {{
         return;
+      }}
+      for (const id of ['file-boleto', 'file-comprovante']) {{
+        const up = new FormData(); up.append('file', document.getElementById(id).files[0]);
+        await ajax('crm.site.fileUploader.upload', up);
       }}
       const fd = new FormData();
       fd.append('name', document.getElementById('b24-form-field-2').value);

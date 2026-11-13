@@ -2,8 +2,8 @@
 Dry run of the real Ibagy submission: opens the portal form, fills every field and attaches the
 two PDFs, saves a screenshot and STOPS before clicking "Enviar". Nothing is filed.
 
-Note: the portal uploads the attachments to its temporary storage as soon as they are selected,
-so the files do reach Ibagy's servers (without any request being created).
+Note: the Bitrix widget only uploads the attachments when "Enviar" is clicked, so a dry run
+sends nothing to Ibagy: files are merely selected in the browser.
 
 Usage (needs Chromium: build with INSTALL_BROWSER=true or run `playwright install chromium`):
     python -m app.tools.ibagy_dry_run --boleto boleto.pdf --comprovante comprovante.pdf
