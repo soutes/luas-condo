@@ -1,0 +1,21 @@
+# Override for the shared Oracle VM: joins the external `web` network so the shared
+# Caddy can reach the containers by name. Not needed (and would fail on a fresh
+# machine where the network does not exist) for local development.
+#
+# On the VM set in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.vm.yml
+# or run: docker compose -f docker-compose.yml -f docker-compose.vm.yml up -d
+services:
+  backend:
+    networks:
+      - default
+      - web
+
+  frontend:
+    networks:
+      - default
+      - web
+
+networks:
+  web:
+    external: true

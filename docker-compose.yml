@@ -38,6 +38,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-luas_condo}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-luas_condo}
       MOCK_BITRIX_URL: http://mock-bitrix:8080
+      ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-luas_condo_backend}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
       MOCK_SUBMISSION: ${MOCK_SUBMISSION:-false}
       IBAGY_TENANT_EMAIL: ${IBAGY_TENANT_EMAIL:-soutes@gmail.com}
       IBAGY_TENANT_PHONE: ${IBAGY_TENANT_PHONE:-48999999999}
@@ -54,9 +57,6 @@ services:
     volumes:
       - ./backend:/app
       - luas_condo_storage:/data/storage
-    networks:
-      - default
-      - web
 
 
   mock-bitrix:
@@ -85,9 +85,6 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
-    networks:
-      - default
-      - web
 
   prometheus:
     image: prom/prometheus:v2.51.0
@@ -97,6 +94,35 @@ services:
       - "${PROMETHEUS_HOST_IP:-127.0.0.1}:${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: luas_condo_alertmanager
+    restart: unless-stopped
+    # Alertmanager does not expand env vars in its config: write the webhook bearer
+    # token to a file at start-up and reference it via credentials_file.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'printf %s "$$ALERT_WEBHOOK_TOKEN" > /tmp/alert_webhook_token && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager'
+    environment:
+      ALERT_WEBHOOK_TOKEN: ${ALERT_WEBHOOK_TOKEN:-}
+    ports:
+      - "${ALERTMANAGER_HOST_IP:-127.0.0.1}:${ALERTMANAGER_HOST_PORT:-9093}:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: luas_condo_jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      MEMORY_MAX_TRACES: "5000"
+    ports:
+      - "${JAEGER_HOST_IP:-127.0.0.1}:${JAEGER_HOST_PORT:-16686}:16686"
 
   grafana:
     image: grafana/grafana:10.4.1
@@ -115,8 +141,4 @@ volumes:
   pgdata:
   luas_condo_storage:
 
-networks:
-  default:
-  web:
-    external: true
 
